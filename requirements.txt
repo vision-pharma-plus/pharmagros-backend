@@ -1,0 +1,44 @@
+# ---- Core framework -------------------------------------------------------
+Django==5.1.5
+djangorestframework==3.15.2
+django-environ==0.11.2
+# 3.2.13+ is the first release with binary wheels for Python 3.13/3.14.
+psycopg[binary]==3.2.13
+
+# ---- Auth / security ------------------------------------------------------
+djangorestframework-simplejwt==5.3.1
+django-axes==7.0.0                 # account lockout / brute-force protection
+django-otp==1.5.4                  # MFA (TOTP)
+qrcode==8.0                        # MFA enrolment QR codes
+argon2-cffi==23.1.0                # password hashing (stronger than PBKDF2)
+
+# ---- API surface ----------------------------------------------------------
+django-filter==24.3
+drf-spectacular==0.27.2            # OpenAPI 3 schema + Swagger UI
+django-cors-headers==4.6.0
+
+# ---- Async / scheduling ---------------------------------------------------
+celery==5.4.0
+redis==5.2.1
+django-celery-beat==2.7.0
+django-redis==5.4.0
+
+# ---- Documents / reporting ------------------------------------------------
+# Pure-Python HTML -> PDF. Chosen over WeasyPrint because it needs no native
+# Pango/Cairo libraries, so PDFs render identically on a Windows dev box and
+# on the server without any system packages.
+xhtml2pdf==0.2.16
+openpyxl==3.1.5                    # Excel export
+
+# ---- Ops ------------------------------------------------------------------
+gunicorn==23.0.0
+whitenoise==6.8.2
+sentry-sdk==2.19.2
+structlog==24.4.0
+
+# ---- Testing --------------------------------------------------------------
+pytest==8.3.4
+pytest-django==4.9.0
+pytest-cov==6.0.0
+factory-boy==3.3.1
+freezegun==1.5.1

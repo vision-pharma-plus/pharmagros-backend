@@ -1,0 +1,431 @@
+{% load i18n l10n %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ invoice.invoice_number }}</title>
+  <style>
+    /* Page setup for xhtml2pdf (pure Python, no native libraries).
+
+       xhtml2pdf supports a narrower CSS subset than a browser — no flexbox,
+       no position:fixed — so every side-by-side row here is a table, and
+       column widths are absolute points (a percentage on <col> resolves to
+       zero and collapses the grid).
+
+       The usable width is 527pt: A4 is 595pt wide, less two 12mm (34pt)
+       margins. Every colgroup below totals that figure, and nested tables
+       total their own parent cell.
+
+       A <colgroup> alone is not enough: xhtml2pdf only honours it when the
+       same width is repeated as an inline style on the <table> and on each
+       <td>. Without that it splits the row into equal columns, which is what
+       previously left the two party cards unequal with a gap between them. */
+    @page {
+      size: A4 portrait;
+      margin: 12mm 12mm 16mm 12mm;
+
+      @frame footer_frame {
+        -pdf-frame-content: footer_content;
+        bottom: 6mm; left: 12mm; width: 186mm; height: 10mm;
+      }
+
+      @frame watermark_frame {
+        -pdf-frame-content: watermark_content;
+        top: 105mm; left: 12mm; width: 186mm; height: 50mm;
+      }
+    }
+
+    body { font-family: "Helvetica", sans-serif; font-size: 8pt; color: #1a1a1a; }
+
+    /* Rules are mid-grey rather than black so the numbers, not the grid, are
+       what the eye lands on first. */
+
+    /* --- Header ---------------------------------------------------------- */
+    table.header { width: 100%; }
+    /* Scoped to direct children: an unscoped `table.header td` also matches
+       the <td>s of the meta table nested inside, and zeroed their padding so
+       every value sat flush against its own cell edge. */
+    table.header > tr > td, table.header > tbody > tr > td {
+      vertical-align: top; padding: 0;
+    }
+    .company-name {
+      font-weight: bold; font-size: 15pt; color: #0b6b3a;
+      letter-spacing: 0.3pt; padding-bottom: 2mm;
+    }
+    .company-info { font-size: 7.5pt; line-height: 1.45; color: #444; }
+    .company-info .lbl { color: #777; }
+
+    /* Logo and document title share the right column, above the reference
+       block. */
+    .logo-wrap { text-align: right; padding-bottom: 2mm; }
+    .doc-title {
+      font-size: 17pt; font-weight: bold; color: #0b6b3a;
+      letter-spacing: 1.2pt; text-align: right; padding-bottom: 2.5mm;
+    }
+    /* Width comes from the colgroup, not a percentage: a nested table in
+       xhtml2pdf resolves 100% against the page, not its parent cell, and
+       would run back across the header.
+
+       Padding is written longhand here and below: xhtml2pdf silently drops
+       the `padding` shorthand on a <td>, which butted every value against
+       its own cell edge — and, in the amount box, under the border. */
+    table.invoice-meta td {
+      padding-top: 1.2mm; padding-bottom: 1.2mm;
+      padding-left: 2.5mm; padding-right: 2.5mm;
+      font-size: 8pt; border-bottom: 0.5pt solid #d8d8d8;
+    }
+    table.invoice-meta td.meta-label {
+      color: #666; text-align: left; background-color: #f4f7f5;
+    }
+    table.invoice-meta td.meta-value { text-align: right; font-weight: bold; }
+
+    /* Green keyline under the masthead, tying the header to the totals band. */
+    .rule-brand {
+      border-bottom: 1.6pt solid #0b6b3a; font-size: 0; line-height: 0;
+      margin-top: 3mm; margin-bottom: 4mm;
+    }
+
+    /* --- Parties --------------------------------------------------------- */
+    /* xhtml2pdf draws a border on a block-level <div> around each of its
+       children rather than around the div itself, so a bordered "card" has
+       to be the <td>, with nested tables for its contents. */
+    table.parties { width: 100%; margin-bottom: 4mm; }
+    table.parties > tr > td, table.parties > tbody > tr > td {
+      vertical-align: top;
+    }
+    td.party-box {
+      border: 0.5pt solid #d8d8d8; background-color: #fafbfa;
+      padding-top: 3mm; padding-bottom: 3mm;
+      padding-left: 4mm; padding-right: 4mm;
+    }
+    /* Both now sit in the label/value grid, so vertical rhythm comes from the
+       shared `table.party-fields td` padding — a padding-bottom here would
+       add to it and break the alignment with the right-hand card. */
+    .party-heading {
+      font-size: 7pt; font-weight: bold; color: #0b6b3a;
+      letter-spacing: 0.8pt;
+    }
+    .party-name { font-weight: bold; font-size: 9.5pt; }
+    /* A two-column label/value grid keeps values aligned down the block
+       instead of ragged after labels of differing width. */
+    table.party-fields { font-size: 7.5pt; }
+    table.party-fields td {
+      padding-top: 0.6mm; padding-bottom: 0.6mm;
+      padding-left: 0; padding-right: 0; vertical-align: top;
+    }
+    table.party-fields td.fld-label { color: #777; }
+    /* Written at equal specificity and after the grey label rule: the heading
+       cell carries both classes, and the brand green must win. */
+    table.party-fields td.party-heading { color: #0b6b3a; }
+
+    /* --- Items grid ------------------------------------------------------ */
+    /* Horizontal rules only: vertical lines in a 7-column grid read as a
+       cage and fight the numbers for attention. */
+    table.items { width: 100%; margin-bottom: 0; }
+    /* Vertical padding is kept tight so a long order fits on fewer pages; the
+       horizontal figures are unchanged because the colgroup widths above are
+       calculated against them. */
+    table.items th {
+      background-color: #0b6b3a; color: #ffffff; font-weight: bold;
+      font-size: 7pt; letter-spacing: 0.5pt; text-align: left;
+      padding-top: 1.5mm; padding-bottom: 1.5mm;
+      padding-left: 3mm; padding-right: 3mm;
+    }
+    table.items td {
+      border-bottom: 0.5pt solid #e2e2e2; font-size: 8pt; vertical-align: top;
+      padding-top: 1mm; padding-bottom: 1mm;
+      padding-left: 3mm; padding-right: 3mm;
+    }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+    table.items th.text-right, table.items td.text-right { text-align: right; }
+    table.items th.text-center, table.items td.text-center { text-align: center; }
+    .item-name { font-weight: bold; }
+    /* Lot and expiry are traceability data, not commercial terms — printed
+       as a quiet sub-line so they stay available without competing with the
+       description. */
+    .item-trace { color: #777; font-size: 7pt; line-height: 1.1; }
+    .row-index { color: #999; font-size: 7.5pt; }
+
+    /* --- Totals ---------------------------------------------------------- */
+    /* Right-aligned stack under the grid, mirroring where the eye already is
+       after reading the PT column. */
+    table.totals-wrap { width: 100%; margin-top: 4mm; }
+    table.totals-wrap > tr > td, table.totals-wrap > tbody > tr > td {
+      vertical-align: top;
+    }
+    table.totals td {
+      padding-top: 1.6mm; padding-bottom: 1.6mm;
+      padding-left: 4mm; padding-right: 4mm; font-size: 8pt;
+    }
+    table.totals td.tot-label { color: #555; text-align: left; }
+    table.totals td.tot-value { text-align: right; }
+    table.totals tr.grand td {
+      background-color: #0b6b3a; color: #ffffff; font-weight: bold;
+      font-size: 10pt;
+      padding-top: 2.6mm; padding-bottom: 2.6mm;
+      padding-left: 4mm; padding-right: 4mm;
+    }
+
+    /* --- Amount in words -------------------------------------------------- */
+    td.amount-words {
+      border-left: 1.6pt solid #0b6b3a; background-color: #f4f7f5;
+      padding-top: 2.5mm; padding-bottom: 2.5mm;
+      padding-left: 4mm; padding-right: 4mm;
+      font-size: 8pt; line-height: 1.4;
+    }
+    .amount-words-label {
+      font-size: 7pt; color: #0b6b3a; font-weight: bold; letter-spacing: 0.5pt;
+      padding-bottom: 1.5mm;
+    }
+    .amount-words-value { font-style: italic; font-size: 8.5pt; }
+
+    /* --- Bank details ----------------------------------------------------- */
+    table.bank { width: 100%; margin-top: 4mm; }
+    table.bank td { vertical-align: top; padding: 0; }
+    .block-heading {
+      font-size: 7pt; font-weight: bold; color: #0b6b3a;
+      letter-spacing: 0.8pt; padding-bottom: 1.5mm;
+    }
+    .bank-line { font-size: 7.5pt; line-height: 1.5; }
+    .bank-line .lbl { color: #777; }
+    .bank-cur { color: #0b6b3a; font-weight: bold; }
+
+    /* --- Signatures ------------------------------------------------------- */
+    /* The rule is the line signed on, so it needs clear space above it for a
+       signature or stamp, and the caption needs to sit below it rather than
+       against it. */
+    table.signatures { width: 100%; font-size: 7.5pt; margin-top: 10mm; }
+    table.signatures td {
+      vertical-align: bottom;
+      padding-left: 3mm; padding-right: 3mm;
+    }
+    .sig-rule { border-bottom: 0.5pt solid #b8b8b8; height: 20mm; }
+    td.sig-label {
+      padding-top: 2.5mm; padding-bottom: 0;
+      padding-left: 3mm; padding-right: 3mm;
+      color: #666; font-size: 7pt; letter-spacing: 0.5pt; text-align: center;
+    }
+
+    .notes {
+      margin-top: 4mm; font-size: 7.5pt; color: #444; line-height: 1.4;
+    }
+    .notes-label { font-weight: bold; color: #0b6b3a; }
+
+    .footer-legal {
+      font-size: 6.5pt; color: #888; text-align: center;
+      border-top: 0.5pt solid #e2e2e2; padding-top: 1.5mm;
+    }
+
+    /* A cancelled document must be visibly distinguishable at a glance.
+       Reprints are recorded in the footer line instead of a watermark. */
+    .watermark { text-align: center; font-size: 50pt; font-weight: bold; }
+    .watermark-cancelled { color: #eecccf; }
+  </style>
+</head>
+<body>
+
+<div id="watermark_content">
+  {% if invoice.status == 'CANCELLED' %}
+    <div class="watermark watermark-cancelled">{% trans "CANCELLED" %}</div>
+  {% endif %}
+</div>
+
+{# --- Masthead: issuer on the left, logo and document reference right --- #}
+<table class="header" style="width: 527pt;">
+  <colgroup><col style="width: 307pt;"><col style="width: 220pt;"></colgroup>
+  <tr>
+    <td style="width: 307pt;">
+      <div class="company-name">{{ company.NAME }}</div>
+      <div class="company-info">
+        {{ company.ADDRESS }}<br>
+        {% if company.PHONE %}<span class="lbl">{% trans "TEL" %}</span> {{ company.PHONE }}{% endif %}
+        {% if company.EMAIL %}&nbsp;&middot;&nbsp;{{ company.EMAIL }}{% endif %}<br>
+        {% if company.NIF %}<span class="lbl">{% trans "NIF" %}</span> {{ company.NIF }}{% endif %}
+        {% if company.RC %}&nbsp;&middot;&nbsp;<span class="lbl">{% trans "Trade register" %}</span> {{ company.RC }}{% endif %}<br>
+        <span class="lbl">{% trans "Liable for VAT" %}</span> {% if company.VAT_REGISTERED %}{% trans "YES" %}{% else %}{% trans "NO" %}{% endif %}
+        {% if company.TAX_CENTRE %}&nbsp;&middot;&nbsp;<span class="lbl">{% trans "Tax centre" %}</span> {{ company.TAX_CENTRE }}{% endif %}<br>
+        {% if company.SECTOR %}<span class="lbl">{% trans "Sector of activity" %}</span> {{ company.SECTOR }}{% endif %}<br>
+        {% if company.LEGAL_FORM %}<span class="lbl">{% trans "Legal form" %}</span> {{ company.LEGAL_FORM }}{% endif %}
+      </div>
+    </td>
+    <td style="width: 220pt;">
+      <div class="logo-wrap"><img src="static/logo.png" style="width: 92pt; height: auto;" /></div>
+      <div class="doc-title">{% trans "INVOICE" %}</div>
+      <table class="invoice-meta" style="width: 220pt;">
+        <colgroup><col style="width: 88pt;"><col style="width: 132pt;"></colgroup>
+        <tr>
+          <td class="meta-label">{% trans "Invoice N°" %}</td>
+          <td class="meta-value">{{ invoice.invoice_number }}</td>
+        </tr>
+        <tr>
+          <td class="meta-label">{% trans "Dated" %}</td>
+          <td class="meta-value">{{ invoice.invoice_date|date:"d/m/Y" }}</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<div class="rule-brand">&nbsp;</div>
+
+{# --- Parties: issuer reference and the customer, side by side ---------- #}
+<table class="parties" style="width: 527pt;">
+  <colgroup><col style="width: 259pt;"><col style="width: 9pt;"><col style="width: 259pt;"></colgroup>
+  <tr>
+    <td class="party-box" style="width: 259pt;">
+      <table class="party-fields">
+        <colgroup><col style="width: 74pt;"><col style="width: 168pt;"></colgroup>
+        {% comment %}
+          The heading and customer name sit inside the same label/value grid as
+          the fields below rather than as free-standing divs above it, so the
+          name aligns to the value column instead of the box edge.
+        {% endcomment %}
+        <tr>
+          <td class="fld-label party-heading">{% trans "BILL TO" %}</td>
+          <td class="party-name">{{ invoice.customer_name }}</td>
+        </tr>
+        {% if invoice.customer_address %}
+        <tr>
+          <td class="fld-label">{% trans "ADDRESS" %}</td>
+          <td>{{ invoice.customer_address }}</td>
+        </tr>
+        {% endif %}
+        {% if invoice.customer_phone %}
+        <tr>
+          <td class="fld-label">{% trans "TEL" %}</td>
+          <td>{{ invoice.customer_phone }}</td>
+        </tr>
+        {% endif %}
+        {% if invoice.customer_nif %}
+        <tr>
+          <td class="fld-label">{% trans "NIF" %}</td>
+          <td>{{ invoice.customer_nif }}</td>
+        </tr>
+        {% endif %}
+        {% if customer_sector %}
+        <tr>
+          <td class="fld-label">{% trans "SECTOR OF ACTIVITY" %}</td>
+          <td>{{ customer_sector }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td class="fld-label">{% trans "LIABLE" %}</td>
+          <td>{% if invoice.customer_nif %}{% trans "YES" %}{% else %}{% trans "NO" %}{% endif %}</td>
+        </tr>
+      </table>
+    </td>
+    <td style="width: 9pt;">&nbsp;</td>
+    <td class="party-box" style="width: 259pt;">
+      <table class="party-fields">
+        <colgroup><col style="width: 84pt;"><col style="width: 158pt;"></colgroup>
+        {# Heading sits in the grid, matching the BILL TO card opposite. #}
+        <tr>
+          <td class="fld-label party-heading" colspan="2">{% trans "PAYMENT DETAILS" %}</td>
+        </tr>
+        {% for account in company.BANK_ACCOUNTS %}
+        <tr>
+          <td class="fld-label">{{ account.bank }}</td>
+          <td>
+            {{ account.number }}
+            <span class="bank-cur">{% if account.currency == "USD" %}${% else %}{{ account.currency }}{% endif %}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </td>
+  </tr>
+</table>
+
+{% comment %}
+  Column widths are absolute and total the 527pt usable width. Lot and
+  expiry ride under the description as a sub-line rather than taking two
+  columns of their own, which buys width for the money columns.
+{% endcomment %}
+<table class="items" repeat="1" style="width: 527pt;">
+  <colgroup>
+    <col style="width: 22pt;"><col style="width: 245pt;"><col style="width: 44pt;">
+    <col style="width: 96pt;"><col style="width: 120pt;">
+  </colgroup>
+  <thead>
+    <tr>
+      <th class="text-center" style="width: 22pt;">{% trans "N" %}</th>
+      <th style="width: 245pt;">{% trans "DESIGNATION" %}</th>
+      <th class="text-center" style="width: 44pt;">{% trans "QTE" %}</th>
+      <th class="text-right" style="width: 96pt;">{% trans "PU" %}</th>
+      <th class="text-right" style="width: 120pt;">{% trans "PT" %}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in lines %}
+    <tr>
+      <td class="text-center row-index" style="width: 22pt;">{{ line.line_number }}</td>
+      <td style="width: 245pt;">
+        <span class="item-name">{{ line.description }}</span>
+        {% comment %}
+          Batch number and expiry are the customer's traceability record —
+          required for them to action a recall on their own shelf.
+        {% endcomment %}
+        {% if line.batch_numbers or line.expiry_dates %}
+        <br><span class="item-trace">
+          {% if line.batch_numbers %}{% trans "BATCH" %} {{ line.batch_numbers }}{% endif %}
+          {% if line.batch_numbers and line.expiry_dates %}&nbsp;&middot;&nbsp;{% endif %}
+          {% if line.expiry_dates %}{% trans "EXP" %} {{ line.expiry_dates }}{% endif %}
+        </span>
+        {% endif %}
+      </td>
+      <td class="text-center" style="width: 44pt;">{{ line.quantity|floatformat:"-2" }}</td>
+      <td class="text-right" style="width: 96pt;">{{ line.unit_price_display }}</td>
+      <td class="text-right" style="width: 120pt;">{{ line.line_total_display }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{# --- Totals block, right-aligned beside the amount in words ------------ #}
+<table class="totals-wrap" style="width: 527pt;">
+  <colgroup><col style="width: 285pt;"><col style="width: 12pt;"><col style="width: 230pt;"></colgroup>
+  <tr>
+    <td class="amount-words" style="width: 285pt;">
+      <div class="amount-words-label">{% trans "Amount chargeable (in words)" %}</div>
+      <div class="amount-words-value">{{ amount_in_words }}</div>
+    </td>
+    <td style="width: 12pt;">&nbsp;</td>
+    <td style="width: 230pt;">
+      <table class="totals" style="width: 230pt;">
+        <colgroup><col style="width: 100pt;"><col style="width: 130pt;"></colgroup>
+        <tr class="grand">
+          <td class="tot-label" style="width: 100pt; color: #ffffff;">{% trans "TOT" %}</td>
+          <td class="tot-value" style="width: 130pt;">{{ totals.total }}</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+{% if invoice.notes %}
+<div class="notes"><span class="notes-label">{% trans "Notes" %}</span> &middot; {{ invoice.notes }}</div>
+{% endif %}
+
+{# --- Signatures: ruled lines to sign on, not bare labels --------------- #}
+<table class="signatures" style="width: 527pt;">
+  <colgroup><col style="width: 176pt;"><col style="width: 175pt;"><col style="width: 176pt;"></colgroup>
+  <tr>
+    <td style="width: 176pt;"><div class="sig-rule">&nbsp;</div></td>
+    <td style="width: 175pt;"><div class="sig-rule">&nbsp;</div></td>
+    <td style="width: 176pt;"><div class="sig-rule">&nbsp;</div></td>
+  </tr>
+  <tr>
+    <td class="sig-label" style="width: 176pt;">{% trans "Transporteur" %}</td>
+    <td class="sig-label" style="width: 175pt;">{% trans "Destinateur" %}</td>
+    <td class="sig-label" style="width: 176pt;">{% trans "Expediteur" %}</td>
+  </tr>
+</table>
+
+<div id="footer_content" class="footer-legal">
+  {{ company.NAME }}
+  &middot; {% trans "Time" %} : {{ invoice.invoice_date|date:"d/m/Y H:i:s" }}
+  &middot; {% trans "Page" %} <pdf:pagenumber> / <pdf:pagecount>
+</div>
+
+</body>
+</html>

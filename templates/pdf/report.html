@@ -1,0 +1,141 @@
+{% load i18n l10n %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }}</title>
+  <style>
+    /* Same engine constraints as pdf/invoice.html: xhtml2pdf supports a
+       narrow CSS subset, so layout is tables with absolute point widths.
+       Landscape here rather than portrait — reports run wide (a movement
+       export is twelve columns) and portrait squeezes them illegibly. */
+    @page {
+      size: A4 landscape;
+      margin: 10mm 10mm 14mm 10mm;
+
+      @frame footer_frame {
+        -pdf-frame-content: footer_content;
+        bottom: 5mm; left: 10mm; width: 277mm; height: 8mm;
+      }
+    }
+
+    body { font-family: "Helvetica", sans-serif; font-size: 7.5pt; color: #000; }
+
+    /* --- Header ---------------------------------------------------------- */
+    table.header { width: 100%; margin-bottom: 3mm; }
+    table.header td { vertical-align: top; padding: 0; }
+    .company-name { font-weight: bold; font-size: 11pt; padding-bottom: 1mm; }
+    .company-info { font-size: 7.5pt; line-height: 1.45; }
+
+    .report-title {
+      font-size: 13pt; font-weight: bold; text-align: right;
+      padding-bottom: 1.5mm;
+    }
+    .report-generated { font-size: 7.5pt; text-align: right; }
+
+    .rule {
+      border-bottom: 1pt solid #000; height: 1pt; margin-bottom: 3mm;
+    }
+
+    /* --- Filters / metadata block ---------------------------------------- */
+    table.metadata { width: 100%; margin-bottom: 3mm; }
+    table.metadata td {
+      border: 0.5pt solid #666; padding: 1.5mm 2mm; font-size: 7.5pt;
+    }
+    .meta-label { font-weight: bold; background-color: #f0f0f0; }
+
+    /* --- Data grid -------------------------------------------------------- */
+    table.rows { width: 100%; }
+    table.rows th {
+      border: 0.5pt solid #000; background-color: #0f5132; color: #fff;
+      font-weight: bold; font-size: 7.5pt; padding: 1.6mm 1.5mm;
+      text-align: center;
+    }
+    table.rows td {
+      border: 0.5pt solid #999; padding: 1.4mm 1.5mm; font-size: 7pt;
+      vertical-align: top;
+    }
+    /* Zebra striping is applied per-row in the markup: xhtml2pdf has no
+       :nth-child support. */
+    tr.alt td { background-color: #f4f6f5; }
+    td.num { text-align: right; }
+
+    .empty {
+      border: 0.5pt solid #999; padding: 6mm; text-align: center;
+      font-style: italic; color: #444;
+    }
+
+    #footer_content {
+      font-size: 6.5pt; color: #444; text-align: center;
+      border-top: 0.5pt solid #999; padding-top: 1.5mm;
+    }
+  </style>
+</head>
+<body>
+
+{# --- Header: logo + issuer on the left, report identity on the right --- #}
+<table class="header">
+  <colgroup><col style="width: 80pt;"><col style="width: 350pt;"><col style="width: 336pt;"></colgroup>
+  <tr>
+    <td>
+      <img src="static/logo.png" style="width: 72pt; height: auto;" />
+    </td>
+    <td>
+      <div class="company-name">{{ company.NAME }}</div>
+      <div class="company-info">
+        {{ company.ADDRESS }}<br>
+        {% if company.PHONE %}{% trans "TEL" %}: {{ company.PHONE }}{% endif %}
+        {% if company.EMAIL %} - {{ company.EMAIL }}{% endif %}<br>
+        {% if company.NIF %}{% trans "NIF" %}: {{ company.NIF }}{% endif %}
+        {% if company.RC %} - {% trans "Trade register" %}: {{ company.RC }}{% endif %}
+      </div>
+    </td>
+    <td>
+      <div class="report-title">{{ title }}</div>
+      <div class="report-generated">
+        {% trans "Generated" %}: {{ generated_at }}<br>
+        {% trans "Lines" %}: {{ row_count }}
+      </div>
+    </td>
+  </tr>
+</table>
+
+<div class="rule"></div>
+
+{% if metadata %}
+  <table class="metadata">
+    <tr>
+      {% for label, value in metadata %}
+        <td class="meta-label">{{ label }}</td>
+        <td>{{ value }}</td>
+      {% endfor %}
+    </tr>
+  </table>
+{% endif %}
+
+{% if rows %}
+  <table class="rows" repeat="1">
+    <thead>
+      <tr>
+        {% for header in headers %}<th>{{ header }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr {% if forloop.counter0|divisibleby:2 %}{% else %}class="alt"{% endif %}>
+          {% for cell in row %}
+            <td {% if cell.numeric %}class="num"{% endif %}>{{ cell.value }}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <div class="empty">{% trans "No data for the selected filters." %}</div>
+{% endif %}
+
+<div id="footer_content">
+  {{ company.NAME }} - {{ title }} - {% trans "Page" %} <pdf:pagenumber> / <pdf:pagecount>
+</div>
+
+</body>
+</html>

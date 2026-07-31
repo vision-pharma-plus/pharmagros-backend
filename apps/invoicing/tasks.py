@@ -1,0 +1,126 @@
+import logging
+from decimal import Decimal
+
+from celery import shared_task
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+from django.utils import timezone, translation
+from django.utils.translation import gettext as _
+
+logger = logging.getLogger(__name__)
+
+
+@shared_task(name="apps.invoicing.tasks.email_invoice")
+def email_invoice(invoice_id: str, language: str = "fr") -> bool:
+    """
+    Email an invoice with its PDF attached.
+
+    Runs off the request path because PDF rendering plus SMTP can take
+    seconds — far longer than the 500 ms API budget.
+    """
+    from .models import Invoice
+    from .pdf import render_invoice_pdf
+
+    invoice = Invoice.objects.filter(pk=invoice_id).select_related("customer").first()
+    if not invoice or not invoice.customer.email:
+        return False
+
+    try:
+        with translation.override(language):
+            context = {"invoice": invoice, "company": settings.COMPANY}
+            subject = _("%(company)s — Invoice %(number)s") % {
+                "company": settings.COMPANY["NAME"],
+                "number": invoice.invoice_number,
+            }
+            message = EmailMultiAlternatives(
+                subject=subject,
+                body=render_to_string("emails/invoice.txt", context),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[invoice.customer.email],
+            )
+            message.attach_alternative(render_to_string("emails/invoice.html", context), "text/html")
+            message.attach(
+                f"{invoice.invoice_number}.pdf",
+                render_invoice_pdf(invoice, language=language),
+                "application/pdf",
+            )
+            message.send()
+
+        invoice.emailed_at = timezone.now()
+        invoice.save(update_fields=["emailed_at"])
+        return True
+    except Exception:
+        logger.exception("invoice_email_failed", extra={"invoice_id": invoice_id})
+        return False
+
+
+@shared_task(name="apps.invoicing.tasks.send_due_reminders")
+def send_due_reminders() -> dict:
+    """
+    Flag overdue invoices and alert on those approaching their due date.
+
+    Two distinct signals: an invoice becoming overdue is a collection event,
+    while one due in a few days is a courtesy reminder. Conflating them would
+    make the alert stream unreadable.
+    """
+    from apps.notifications.models import NotificationCode, NotificationSeverity
+    from apps.notifications.services import notify_permission_holders
+
+    from .models import Invoice, InvoiceStatus
+    from .services import mark_overdue_invoices
+
+    newly_overdue = mark_overdue_invoices()
+    today = timezone.localdate()
+
+    due_soon = Invoice.objects.filter(
+        status__in=[InvoiceStatus.POSTED, InvoiceStatus.PARTIALLY_PAID],
+        due_date__gte=today,
+        due_date__lte=today + timezone.timedelta(days=7),
+        balance_due__gt=0,
+        deleted_at__isnull=True,
+    )
+
+    overdue = Invoice.objects.filter(
+        status=InvoiceStatus.OVERDUE, balance_due__gt=0, deleted_at__isnull=True,
+    )
+
+    if overdue.exists():
+        total = sum(inv.balance_due for inv in overdue)
+        notify_permission_holders(
+            permission_code="invoicing.record_payment",
+            code=NotificationCode.INVOICE_OVERDUE,
+            title=str(
+                _("%(count)d overdue invoices") % {"count": overdue.count()}
+            ),
+            body=str(
+                _("Total overdue: %(total)s BIF. Review the receivables ageing report.")
+                % {"total": total.quantize(Decimal("1"))}
+            ),
+            severity=NotificationSeverity.WARNING,
+            link="/invoicing/invoices?overdue=true",
+            dedupe_key=f"overdue-invoices-{today:%Y-%m-%d}",
+        )
+
+    if due_soon.exists():
+        notify_permission_holders(
+            permission_code="invoicing.record_payment",
+            code=NotificationCode.INVOICE_DUE,
+            title=str(
+                _("%(count)d invoices due within 7 days") % {"count": due_soon.count()}
+            ),
+            body=str(_("Contact customers to arrange settlement.")),
+            severity=NotificationSeverity.INFO,
+            link="/invoicing/invoices?unpaid=true",
+            dedupe_key=f"due-soon-invoices-{today:%Y-%W}",
+        )
+
+    logger.info(
+        "due_reminders_complete",
+        extra={"newly_overdue": newly_overdue, "due_soon": due_soon.count()},
+    )
+    return {
+        "newly_marked_overdue": newly_overdue,
+        "total_overdue": overdue.count(),
+        "due_soon": due_soon.count(),
+    }

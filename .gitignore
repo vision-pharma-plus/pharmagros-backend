@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Django
+*.sqlite3
+*.sqlite3.bak-*
+/media/
+/staticfiles/
+/schema.yml
+
+# Secrets — never commit
+.env
+.tok
+*.pem
+*.token
+/docker/nginx/certs/
+
+# Backups
+/docker/postgres/backup/*.dump
+
+# Tooling
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.idea/
+.vscode/
