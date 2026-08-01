@@ -116,7 +116,6 @@ def declare_pending_cancellations(limit: int = 50) -> dict:
     """
     from .fiscal import service as fiscal
     from .fiscal.client import OBRError
-
     from .models import FiscalStatus, Invoice, InvoiceStatus
 
     if not fiscal.is_enabled():

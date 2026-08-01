@@ -18,8 +18,7 @@ import binascii
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from datetime import timezone as dt_timezone
+from datetime import UTC, datetime, timedelta
 
 import requests
 from django.conf import settings
@@ -104,7 +103,7 @@ def _token_expiry(token: str):
     if not isinstance(expiry, (int, float)):
         return None
     # An `exp` claim is seconds since the epoch in UTC by definition.
-    return datetime.fromtimestamp(expiry, tz=dt_timezone.utc)
+    return datetime.fromtimestamp(expiry, tz=UTC)
 
 
 def authenticate(*, force: bool = False) -> str:

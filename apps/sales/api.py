@@ -25,9 +25,9 @@ from .serializers import (
     SaleMarginSerializer,
     SaleReturnCreateSerializer,
     SaleReturnSerializer,
+    SaleSerializer,
     SalesReceiptListSerializer,
     SalesReceiptSerializer,
-    SaleSerializer,
 )
 
 logger = logging.getLogger(__name__)
