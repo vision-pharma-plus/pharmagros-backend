@@ -20,7 +20,6 @@ from django.utils.translation import gettext as _
 from apps.core.audit import record, snapshot
 from apps.core.exceptions import (
     BusinessRuleViolation,
-    DocumentLocked,
     InvalidStateTransition,
 )
 from apps.core.models import AuditAction

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Count, DecimalField, F, Q, Sum, Value
+from django.db.models import Count, DecimalField, F, Sum, Value
 from django.db.models.functions import Coalesce, TruncDate, TruncMonth
 from django.utils import timezone
 

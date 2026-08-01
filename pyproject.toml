@@ -1,0 +1,39 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["migrations", ".venv", "staticfiles"]
+
+[tool.ruff.lint]
+# Conservative default set. The codebase predates linting in CI, so this
+# encodes the conventions already in use rather than reformatting to suit
+# a stock configuration.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+
+ignore = [
+    # Django and DRF declare mutable class attributes everywhere (Meta,
+    # serializer_class, queryset, permission_classes). Annotating each as
+    # ClassVar is noise that fights the framework's own idiom.
+    "RUF012",
+    # Long lines are handled by the formatter, not the linter.
+    "E501",
+    # `except ... : pass` on token teardown is deliberate; see accounts/api.py.
+    "SIM105",
+    # Both rules collapse branching into one-liners. Where the branches carry
+    # explanatory comments — French plural rules in invoicing/pdf.py, tiered
+    # pricing in catalog/models.py — the condensed form is harder to read.
+    "SIM102",
+    "SIM108",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Settings modules layer configuration with `from .base import *`, then
+# override names. Star-import and import-order rules cannot express that.
+"config/settings/*.py" = ["F403", "F405", "E402", "F401"]
+# Package re-exports exist to define the public surface of each app.
+"__init__.py" = ["F401"]
+# Tests favour readability over import hygiene.
+"tests/*.py" = ["F401", "F811"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

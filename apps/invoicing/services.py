@@ -23,7 +23,7 @@ from apps.core.exceptions import (
     InvalidStateTransition,
 )
 from apps.core.models import AuditAction
-from apps.core.money import compute_line, q_document, q_internal
+from apps.core.money import compute_line, q_internal
 from apps.core.numbering import next_number
 
 from .models import (

@@ -11,7 +11,7 @@ from apps.core.exceptions import BusinessRuleViolation
 from apps.core.permissions import HasPermission
 
 from . import services
-from .models import Sale, SaleLine, SaleReturn, SaleStatus
+from .models import Sale, SaleLine, SaleReturn
 from .serializers import (
     CancelSerializer,
     ConfirmSaleSerializer,

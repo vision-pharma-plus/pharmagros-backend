@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from apps.core.audit import record, snapshot
+from apps.core.audit import record
 from apps.core.exceptions import BusinessRuleViolation
 from apps.core.models import AuditAction
 

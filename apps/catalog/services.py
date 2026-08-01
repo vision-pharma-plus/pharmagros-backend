@@ -164,7 +164,7 @@ def create_medicine(*, actor=None, **data) -> Medicine:
     opening_supplier = data.pop("opening_supplier", None)
     opening_warehouse = data.pop("opening_warehouse", None)
     batch_number = data.get("batch_number", "")
-    expiry_date = data.get("expiry_date", None)
+    expiry_date = data.get("expiry_date")
 
     medicine = Medicine.objects.create(created_by=actor, **data)
 

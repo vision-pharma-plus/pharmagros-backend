@@ -8,7 +8,7 @@ from apps.core.fields import MoneySerializerField
 from apps.inventory.models import Warehouse
 from apps.partners.models import Supplier
 
-from .models import Category, DosageForm, Manufacturer, Medicine, PriceHistory, UnitOfMeasure
+from .models import Category, Manufacturer, Medicine, PriceHistory, UnitOfMeasure
 
 
 class CategorySerializer(serializers.ModelSerializer):

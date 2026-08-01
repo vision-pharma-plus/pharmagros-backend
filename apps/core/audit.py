@@ -9,8 +9,9 @@ accident.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any
 from uuid import UUID
 
 from django.db import connection, transaction

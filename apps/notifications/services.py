@@ -17,7 +17,7 @@ from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils import timezone, translation
 
-from .models import Notification, NotificationCode, NotificationSeverity
+from .models import Notification, NotificationSeverity
 
 logger = logging.getLogger(__name__)
 

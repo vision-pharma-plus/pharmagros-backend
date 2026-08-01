@@ -20,12 +20,12 @@ also prevents deadlock between two allocations touching overlapping batches.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Iterable
 
 from django.db import transaction
-from django.db.models import F, Q, Sum
+from django.db.models import F, Sum
 from django.utils import timezone
 from django.utils.translation import gettext as _
 

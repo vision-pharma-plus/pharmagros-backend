@@ -7,12 +7,12 @@ logger = logging.getLogger(__name__)
 def translate_text(text: str, target_lang: str) -> str:
     """
     Translate text to the target language (usually 'fr' or 'en').
-    Returns the original text if deep-translator is not installed, 
+    Returns the original text if deep-translator is not installed,
     if there's a network error, or if text is empty.
     """
     if not text or not isinstance(text, str):
         return text
-    
+
     # Strip whitespace
     text = text.strip()
     if not text:
@@ -28,5 +28,5 @@ def translate_text(text: str, target_lang: str) -> str:
         logger.warning("deep-translator is not installed; skipping translation")
     except Exception as e:
         logger.warning(f"Translation failed for '{text}' to '{target_lang}': {e}")
-    
+
     return text
