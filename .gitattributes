@@ -1,0 +1,8 @@
+# Normalise to LF in the repository; check out with the platform's native
+# endings for ordinary source files.
+* text=auto
+
+# Shell scripts must keep LF even when checked out on Windows: a CRLF shebang
+# line makes the kernel fail the exec with "bad interpreter".
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf

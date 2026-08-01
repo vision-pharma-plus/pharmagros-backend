@@ -98,14 +98,11 @@ jobs:
         # fails the build rather than surfacing in production.
         run: python manage.py makemigrations --check --dry-run
 
-      - name: Run migrations
-        run: python manage.py migrate --no-input
-
-      - name: Seed RBAC and sequences
-        run: |
-          python manage.py seed_rbac
-          python manage.py seed_sequences
-
+      # No separate migrate/seed steps: config.settings.test pins DATABASES to
+      # a local SQLite file, so those ran against a throwaway database that the
+      # suite never opens — pytest-django creates its own. tests/conftest.py
+      # already calls seed_rbac and seed_sequences in a session fixture, which
+      # is the seeding the tests actually depend on.
       - name: Run tests
         run: pytest
 

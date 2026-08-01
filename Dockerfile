@@ -76,8 +76,16 @@ RUN pip install --no-index --find-links=/wheels -r requirements.txt \
 
 COPY --chown=app:app . .
 
-RUN mkdir -p /app/staticfiles /app/media \
-    && chown -R app:app /app/staticfiles /app/media
+# Set explicitly rather than relying on the checkout: the repository is worked
+# on from Windows, which does not carry a Unix executable bit.
+RUN chmod +x /app/docker/entrypoint.sh
+
+# /app/data is the mount point for the persistent volume that holds the SQLite
+# database. It is created and owned here because the container runs as `app`:
+# SQLite needs write access to the directory, not just the file, to create its
+# -wal and -journal siblings.
+RUN mkdir -p /app/staticfiles /app/media /app/data \
+    && chown -R app:app /app/staticfiles /app/media /app/data
 
 USER app
 
@@ -93,18 +101,8 @@ RUN DJANGO_SECRET_KEY=build-only \
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health/ || exit 1
+    CMD curl -fsS "http://localhost:${PORT:-8000}/health/" || exit 1
 
-# 3 workers x 2 threads suits the stated 100-concurrent-user target on a
-# modest VM. Raise workers, not threads, for CPU-bound growth.
-CMD ["gunicorn", "config.wsgi:application", \
-     "--bind", "0.0.0.0:8000", \
-     "--workers", "3", \
-     "--threads", "2", \
-     "--worker-class", "gthread", \
-     "--timeout", "60", \
-     "--graceful-timeout", "30", \
-     "--max-requests", "1000", \
-     "--max-requests-jitter", "100", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-"]
+# The entrypoint migrates and seeds before starting gunicorn, and binds to
+# $PORT so the container works on platforms that assign the port at run time.
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
