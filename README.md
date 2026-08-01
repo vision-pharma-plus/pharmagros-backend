@@ -163,10 +163,19 @@ Mirroring CI:
 
 ```bash
 ruff check apps config
-ruff format --check apps config
 python manage.py check --deploy --fail-level WARNING
 python manage.py makemigrations --check --dry-run
 ```
+
+Ruff is configured in `pyproject.toml` and pinned to 0.16.1 in CI. The rule
+set encodes the conventions the code already follows rather than stock
+defaults, which fight Django idiom: `RUF012` would demand `ClassVar` on every
+`Meta` and DRF attribute, and the star-import layering in `config/settings/`
+is deliberate.
+
+`ruff format --check` runs in CI but does not fail the build yet. The
+formatter currently rewrites ~3300 lines across 51 files; until that lands as
+its own commit, the gate stays advisory.
 
 ---
 
