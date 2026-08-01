@@ -27,7 +27,11 @@ COPY requirements.txt .
 # dropped connection resumes from what already arrived rather than re-fetching
 # every package. It lives in BuildKit's cache, not in the image, so nothing
 # here inflates the final size.
-RUN --mount=type=cache,target=/root/.cache/pip \
+#
+# The explicit `id` is required: Railway's Metal builder rejects a cache mount
+# without one ("missing an id argument"), where stock BuildKit defaults it to
+# the target path. Naming it keeps the same cache on both.
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip wheel --wheel-dir /wheels -r requirements.txt
 
 

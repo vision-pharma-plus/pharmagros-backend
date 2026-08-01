@@ -81,6 +81,16 @@ jobs:
         run: ruff format --check apps config || true
 
       - name: Django system check (deploy profile)
+        # Must run against the production settings. The job-level
+        # DJANGO_SETTINGS_MODULE is `test`, which deliberately turns off
+        # SECURE_SSL_REDIRECT and the secure cookies so the suite can run over
+        # plain HTTP — checking that profile reports those as W008/W012/W016
+        # and tells us nothing about the real deploy posture.
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          DJANGO_SECRET_KEY: ci-deploy-check-key-long-enough-to-pass-w009-000000
+          JWT_SIGNING_KEY: ci-deploy-check-distinct-jwt-signing-key-000000
+          DJANGO_ALLOWED_HOSTS: example.com
         run: python manage.py check --deploy --fail-level WARNING
 
       - name: Verify no missing migrations

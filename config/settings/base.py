@@ -249,6 +249,10 @@ SPECTACULAR_SETTINGS = {
         "NotificationSeverityEnum": "apps.notifications.models.NotificationSeverity.choices",
         "NotificationCodeEnum": "apps.notifications.models.NotificationCode.choices",
         "AuditActionEnum": "apps.core.models.AuditAction.choices",
+        # Reached under two field names — `credit_reason_code` on the invoice
+        # and `reason_code` on the credit-note request — so it needs an
+        # explicit name to stay a single enum in the generated client.
+        "CreditNoteReasonEnum": "apps.invoicing.models.CreditNoteReason.choices",
         "LanguageEnum": [("fr", "Français"), ("en", "English")],
     },
 }
