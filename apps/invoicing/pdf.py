@@ -8,7 +8,6 @@ guard against a digit being altered after issue.
 
 from __future__ import annotations
 
-import io
 from decimal import Decimal
 
 from django.conf import settings
@@ -206,12 +205,15 @@ def _tax_summary(invoice) -> dict:
     }
 
 
-def render_invoice_pdf(invoice, *, language: str | None = None, is_duplicate: bool = False) -> bytes:
+def render_invoice_pdf(invoice, *, language: str | None = None) -> bytes:
     """
     Render an invoice to PDF bytes.
 
     Language defaults to the customer's own, so a francophone pharmacy always
     receives a French document regardless of which staff member printed it.
+
+    Every copy renders identically. Reprints are still counted and audited
+    (see `services.register_print`), but they are not marked on the page.
     """
     language = language or "fr"
 
@@ -238,6 +240,10 @@ def render_invoice_pdf(invoice, *, language: str | None = None, is_duplicate: bo
                     "unit_of_measure": line.unit_of_measure,
                     "discount_percent": line.discount_percent,
                     "tax_rate": line.tax_rate,
+                    # The TAX column prints the OBR class letter (A/B/C), not
+                    # a rate or an amount: it is what ties each line to the
+                    # matching TOTAL A/B/C column in the summary band below,
+                    # which is the reconciliation an inspection performs.
                     "tax_class": _tax_class(line.tax_rate),
                     "unit_price_display": format_bif(line.unit_price),
                     "unit_price_ttc_display": format_bif(unit_price_ttc),
@@ -252,12 +258,18 @@ def render_invoice_pdf(invoice, *, language: str | None = None, is_duplicate: bo
         customer = invoice.customer
         customer_sector = customer.get_customer_type_display() if customer else ""
 
+        # The masthead names whoever issued the document. `created_by` is
+        # nullable — an invoice raised by a scheduled job has no user — so
+        # the row is omitted rather than printed blank.
+        issuer = invoice.created_by
+        cashier = (issuer.get_full_name() or issuer.email) if issuer else ""
+
         context = {
             "invoice": invoice,
             "lines": lines,
             "company": settings.COMPANY,
             "customer_sector": customer_sector,
-            "is_duplicate": is_duplicate,
+            "cashier": cashier,
             "LANGUAGE_CODE": language,
             "totals": {
                 "subtotal": format_bif(invoice.subtotal),
@@ -277,28 +289,48 @@ def render_invoice_pdf(invoice, *, language: str | None = None, is_duplicate: bo
     return _html_to_pdf(html)
 
 
+class PDFEngineUnavailable(RuntimeError):
+    """
+    WeasyPrint could not be loaded on this host.
+
+    Raised in place of the raw ImportError/OSError so every caller — the
+    invoice endpoint, the report exporters, the email task — can recognise
+    'the engine is missing' without each one having to know which exception
+    types the native loader happens to raise.
+    """
+
+
+ENGINE_UNAVAILABLE_MESSAGE = (
+    "PDF rendering is unavailable on this server: WeasyPrint could not be "
+    "loaded. Install the backend dependencies (pip install -r "
+    "requirements.txt) and, on Windows, the GTK runtime that provides its "
+    "Pango/Cairo libraries."
+)
+
+
 def _html_to_pdf(html: str) -> bytes:
     """
     Convert rendered HTML to PDF bytes.
 
-    Uses xhtml2pdf, which is pure Python: it installs from pip on any
-    platform and needs no system libraries. That matters because the
-    previous engine (WeasyPrint) required native Pango/Cairo builds, which
-    are absent on Windows hosts and made PDF download fail with a 500.
+    Uses WeasyPrint, which implements enough of CSS 2.1 and Paged Media that
+    the templates can be written as ordinary stylesheets — flexbox, real
+    `@page` margin boxes, `position: fixed` running elements — instead of the
+    nested-table-with-absolute-widths style the previous engine forced.
+
+    WeasyPrint needs native Pango/Cairo libraries. They are packaged on Linux
+    (see the Dockerfile) but must be installed separately on Windows via the
+    GTK runtime. Without them `import weasyprint` raises OSError from deep
+    inside cffi's dlopen — at import time, not at render time — so the import
+    is wrapped here rather than at module scope: importing this module must
+    stay safe on a host that cannot render, otherwise the number-to-words
+    helpers and the invoicing app itself become unimportable.
     """
-    from xhtml2pdf import pisa
+    try:
+        from weasyprint import HTML
+    except (ImportError, OSError) as exc:
+        raise PDFEngineUnavailable(ENGINE_UNAVAILABLE_MESSAGE) from exc
 
-    buffer = io.BytesIO()
-    result = pisa.CreatePDF(
-        html,
-        dest=buffer,
-        encoding="utf-8",
-        # Resolve any relative asset path (a logo, say) against the project
-        # root rather than the current working directory.
-        path=str(settings.BASE_DIR),
-    )
-
-    if result.err:
-        raise RuntimeError(f"PDF generation failed with {result.err} error(s)")
-
-    return buffer.getvalue()
+    # base_url anchors relative asset paths (the logo) to the project root, so
+    # `static/logo.png` in a template resolves the same way regardless of the
+    # process working directory.
+    return HTML(string=html, base_url=str(settings.BASE_DIR)).write_pdf()

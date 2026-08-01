@@ -1,10 +1,18 @@
 from decimal import Decimal
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.core.fields import MoneySerializerField
 
-from .models import Invoice, InvoiceLine, Payment, PaymentAllocation, PaymentMethod
+from .models import (
+    CreditNoteReason,
+    Invoice,
+    InvoiceLine,
+    Payment,
+    PaymentAllocation,
+    PaymentMethod,
+)
 
 
 class InvoiceLineSerializer(serializers.ModelSerializer):
@@ -14,6 +22,14 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
     line_subtotal = MoneySerializerField(read_only=True)
     line_total = MoneySerializerField(read_only=True)
 
+    # The originating sale line, and how much of it is still returnable.
+    # A credit note for returned goods has to restock the batch the units
+    # actually came from, and only the sale line knows that. Resolved in the
+    # view rather than stored, because an invoice line has no FK to a sale
+    # line — the two are matched on product within the invoice's own sale.
+    sale_line = serializers.SerializerMethodField()
+    returnable_quantity = serializers.SerializerMethodField()
+
     class Meta:
         model = InvoiceLine
         fields = [
@@ -22,9 +38,47 @@ class InvoiceLineSerializer(serializers.ModelSerializer):
             "quantity", "unit_of_measure", "unit_price",
             "discount_percent", "discount_amount",
             "tax_rate", "tax_amount", "line_subtotal", "line_total",
+            "sale_line", "returnable_quantity",
         ]
         # unit_cost is deliberately excluded: it is margin data and must not
         # reach a customer-facing document or an unprivileged client.
+        read_only_fields = fields
+
+    def _matching_sale_line(self, line: InvoiceLine):
+        """
+        The sale line this invoice line was billed from, or None.
+
+        `sale_lines_by_product` is supplied by the view; without it — a list
+        response, or an invoice with no sale — there is nothing to match and
+        the fields simply come back null.
+        """
+        by_product = self.context.get("sale_lines_by_product")
+        if not by_product or line.product_id is None:
+            return None
+        return by_product.get(line.product_id)
+
+    def get_sale_line(self, line: InvoiceLine) -> int | None:
+        sale_line = self._matching_sale_line(line)
+        return sale_line.pk if sale_line else None
+
+    def get_returnable_quantity(self, line: InvoiceLine) -> str | None:
+        sale_line = self._matching_sale_line(line)
+        if sale_line is None:
+            return None
+        return str(sale_line.quantity - sale_line.quantity_returned)
+
+
+class CorrectionSummarySerializer(serializers.ModelSerializer):
+    """A credit/debit note as it appears on the invoice it corrects."""
+
+    total_amount = MoneySerializerField(read_only=True)
+
+    class Meta:
+        model = Invoice
+        fields = [
+            "id", "invoice_number", "invoice_type", "status",
+            "invoice_date", "total_amount", "credit_reason_code", "notes",
+        ]
         read_only_fields = fields
 
 
@@ -43,6 +97,9 @@ class InvoiceListSerializer(serializers.ModelSerializer):
             "invoice_date", "due_date", "is_credit_sale",
             "total_amount", "paid_amount", "balance_due",
             "is_overdue", "days_overdue",
+            # Surfaced in the list so an undeclared document is visible
+            # without opening it — the whole point of tracking it separately.
+            "fiscal_status",
         ]
 
 
@@ -50,6 +107,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
     lines = InvoiceLineSerializer(many=True, read_only=True)
     customer_code = serializers.CharField(source="customer.customer_code", read_only=True)
     sale_number = serializers.CharField(source="sale.sale_number", read_only=True, default=None)
+    # Present when this invoice records a cash sale that was already receipted.
+    # The UI reads it to say so on the document rather than letting the invoice
+    # look like an unpaid demand for money that has in fact been collected.
+    source_receipt_number = serializers.CharField(
+        source="source_receipt.receipt_number", read_only=True, default=None,
+    )
     original_invoice_number = serializers.CharField(
         source="original_invoice.invoice_number", read_only=True, default=None,
     )
@@ -71,6 +134,20 @@ class InvoiceSerializer(serializers.ModelSerializer):
     payment_progress = serializers.DecimalField(
         max_digits=10, decimal_places=2, read_only=True,
     )
+    is_declared = serializers.BooleanField(read_only=True)
+    declaration_exhausted = serializers.BooleanField(read_only=True)
+
+    # Credit/debit notes already issued against this invoice. Surfaced so the
+    # detail page can show what has been corrected without a second request,
+    # and so a second correction is a deliberate act rather than an accident.
+    corrections = serializers.SerializerMethodField()
+
+    @extend_schema_field(CorrectionSummarySerializer(many=True))
+    def get_corrections(self, invoice: Invoice) -> list[dict]:
+        notes = [
+            note for note in invoice.corrections.all() if note.deleted_at is None
+        ]
+        return CorrectionSummarySerializer(notes, many=True).data
 
     class Meta:
         model = Invoice
@@ -79,6 +156,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "customer", "customer_code",
             "customer_name", "customer_nif", "customer_address", "customer_phone",
             "sale", "sale_number",
+            "source_receipt", "source_receipt_number",
             "invoice_date", "due_date", "payment_terms_days",
             "subtotal", "discount_amount", "taxable_amount", "tax_amount",
             "total_amount", "paid_amount", "balance_due", "currency",
@@ -87,7 +165,16 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "cancelled_at", "cancellation_reason",
             "print_count", "last_printed_at", "emailed_at",
             "original_invoice", "original_invoice_number",
+            "credit_reason_code", "corrections",
             "is_editable", "is_overdue", "days_overdue", "payment_progress",
+            # --- OBR declaration ---
+            # `last_declaration_error` is included because the person who can
+            # act on a rejection needs to see why it was refused without
+            # having to read the server logs.
+            "fiscal_status", "fiscal_signature",
+            "obr_registered_number", "obr_registered_at", "obr_electronic_signature",
+            "declared_at", "declaration_attempts", "last_declaration_error",
+            "is_declared", "declaration_exhausted",
             "lines", "created_at", "updated_at",
         ]
         read_only_fields = fields
@@ -117,9 +204,31 @@ class InvoiceCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
+class CreditNoteLineWriteSerializer(InvoiceLineWriteSerializer):
+    """
+    A credit note line, optionally carrying the goods-return decision.
+
+    `sale_line` and `restock` are only meaningful when the credit note is
+    correcting a physical return: they identify the batch the units came from
+    and whether those units may re-enter sellable stock. `restock` defaults to
+    False for the same reason as on the sale return path — returned medicines
+    are quarantined unless storage integrity was demonstrably maintained.
+    """
+
+    sale_line = serializers.IntegerField(required=False, allow_null=True)
+    restock = serializers.BooleanField(default=False)
+    condition_notes = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+
 class CreditNoteSerializer(serializers.Serializer):
-    lines = InvoiceLineWriteSerializer(many=True, allow_empty=False)
+    lines = CreditNoteLineWriteSerializer(many=True, allow_empty=False)
     reason = serializers.CharField(max_length=255)
+    # The scenario that prompted the correction. Kept separate from the
+    # free-text reason so the goods-return path can be recognised without
+    # parsing prose, and so corrections stay reportable by cause.
+    reason_code = serializers.ChoiceField(
+        choices=CreditNoteReason.choices, default=CreditNoteReason.OTHER,
+    )
 
 
 class CancelInvoiceSerializer(serializers.Serializer):

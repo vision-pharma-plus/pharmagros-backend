@@ -16,7 +16,7 @@ from django.db import transaction
 ADMIN_PASSWORD = "Demo!2026#Pharma"
 
 # (email, first name, last name, role code)
-ADMIN_USER = ("admin@pharmagros.bi", "Aline", "Ndayishimiye", "system-administrator")
+ADMIN_USER = ("visionpharmaplus@gmail.com", "Aline", "Ndayishimiye", "system-administrator")
 
 
 class Command(BaseCommand):

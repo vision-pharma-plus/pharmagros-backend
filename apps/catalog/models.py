@@ -23,6 +23,7 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.core.fields import MoneyField, PercentField, QuantityField
 from apps.core.models import BaseModel
+from apps.core.money import price_ex_tax
 
 
 def _localised(instance, base: str) -> str:
@@ -244,11 +245,24 @@ class Medicine(BaseModel):
     # pricing. Actual inventory valuation always uses the batch landed cost,
     # never this field — batches bought at different prices must not be
     # collapsed to a single catalogue figure.
+    #
+    # It is also the one price here that EXCLUDES VAT: it is what the supplier
+    # charges before tax. Both selling prices below are VAT-INCLUSIVE — the
+    # shelf price the customer pays — and `price_for()` extracts the taxable
+    # base from them at the point a line is built. Mixing the two bases up is
+    # the way this model misprices an entire catalogue, so the distinction is
+    # carried in the field labels the user actually sees.
     unit_cost = MoneyField(_("reference unit cost"))
-    selling_price = MoneyField(_("selling price"))
+    selling_price = MoneyField(
+        _("selling price (VAT incl.)"),
+        help_text=_("The price the customer pays, with VAT included."),
+    )
     wholesale_price = MoneyField(
-        _("wholesale price"),
-        help_text=_("Price applied to institutional customers, if different."),
+        _("wholesale price (VAT incl.)"),
+        help_text=_(
+            "Price applied to institutional customers, if different. "
+            "VAT-inclusive, like the standard selling price."
+        ),
     )
     vat_rate = PercentField(
         _("VAT rate (%)"), default=Decimal("18"),
@@ -396,18 +410,45 @@ class Medicine(BaseModel):
 
     @property
     def margin_percent(self) -> Decimal:
-        """Reference margin. Real margin is computed per sale from batch cost."""
+        """
+        Reference margin. Real margin is computed per sale from batch cost.
+
+        Both sides must be on the same tax basis. `unit_cost` is a purchase
+        cost and is therefore HT, while `selling_price` is TTC — comparing them
+        directly would overstate every margin by the VAT rate, so the selling
+        price is put back on an HT footing first.
+        """
         if not self.unit_cost:
             return Decimal("0")
-        return ((self.selling_price - self.unit_cost) / self.unit_cost) * Decimal("100")
+        net_price = price_ex_tax(self.selling_price, self.effective_vat_rate)
+        return ((net_price - self.unit_cost) / self.unit_cost) * Decimal("100")
 
     def price_for(self, customer=None) -> Decimal:
         """
-        Resolve the applicable unit price.
+        Resolve the applicable unit price, tax-EXCLUSIVE.
+
+        Catalogue prices are stored TTC (what the customer pays at the
+        counter), but a document line is built HT and has tax applied to it by
+        `compute_line`. Returning HT here means that inversion happens exactly
+        once, at the single point where a catalogue price becomes a sale line —
+        callers keep working unchanged and cannot double-count the VAT.
 
         Institutional customers get the wholesale price when one is set;
-        otherwise everyone falls back to the standard selling price. Kept as a
-        method so tiered pricing can extend here without touching call sites.
+        otherwise everyone falls back to the standard selling price. Both are
+        TTC, so both are extracted the same way. Kept as a method so tiered
+        pricing can extend here without touching call sites.
+        """
+        if customer is not None and self.wholesale_price > 0:
+            if getattr(customer, "is_institutional", False):
+                return price_ex_tax(self.wholesale_price, self.effective_vat_rate)
+        return price_ex_tax(self.selling_price, self.effective_vat_rate)
+
+    def price_incl_tax_for(self, customer=None) -> Decimal:
+        """
+        The applicable price as the customer sees it — the TTC shelf price.
+
+        Mirrors `price_for` tier for tier, so display code never has to
+        re-derive which tier applied.
         """
         if customer is not None and self.wholesale_price > 0:
             if getattr(customer, "is_institutional", False):

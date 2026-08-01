@@ -27,7 +27,10 @@ from apps.core.money import compute_line, q_internal
 from apps.core.numbering import next_number
 
 from .models import (
+    GOODS_RETURN_REASONS,
     OPEN_STATUSES,
+    CreditNoteReason,
+    FiscalStatus,
     Invoice,
     InvoiceLine,
     InvoiceStatus,
@@ -180,7 +183,15 @@ def _create_line(invoice: Invoice, line_number: int, data: dict) -> InvoiceLine:
         batch_numbers=data.get("batch_numbers", ""),
         expiry_dates=data.get("expiry_dates", ""),
         quantity=quantity,
-        unit_of_measure=data.get("unit_of_measure", ""),
+        # Falls back to the product's own unit for the same reason as
+        # `product_code` above: the printed invoice gives this column of its
+        # own, and a caller that omits it — the invoice API, or the sale
+        # return path building a credit note — would otherwise leave a blank
+        # cell on a document that had the value available all along.
+        unit_of_measure=(
+            data.get("unit_of_measure")
+            or (product.unit_of_measure.code if product else "")
+        ),
         unit_price=unit_price,
         discount_percent=discount_percent,
         discount_amount=amounts["discount"],
@@ -221,6 +232,17 @@ def post_invoice(invoice: Invoice, *, actor=None) -> Invoice:
     invoice.status = InvoiceStatus.POSTED
     invoice.posted_at = timezone.now()
     invoice.posted_by = actor
+
+    # Assign the fiscal identity now, while the document is becoming real.
+    # The signature is computed locally, so this adds no network dependency
+    # to posting: a counter sale completes whether or not the OBR is
+    # reachable. Actual declaration is drained asynchronously by the sweep.
+    from .fiscal import service as fiscal
+
+    if fiscal.is_enabled() and fiscal.is_declarable(invoice):
+        fiscal.assign_signature(invoice)
+        invoice.fiscal_status = FiscalStatus.PENDING
+
     invoice.save()
 
     # The customer's exposure changes the moment the invoice becomes real.
@@ -308,11 +330,29 @@ def cancel_invoice(invoice: Invoice, *, reason: str, actor=None) -> Invoice:
         )
 
     previous_status = invoice.status
+    # Read the fiscal status from the database rather than from this
+    # instance: declaration happens asynchronously, so a caller holding an
+    # Invoice loaded before the sweep ran would otherwise see a stale
+    # PENDING and wrongly drop a document the OBR has already accepted.
+    previous_fiscal_status = (
+        Invoice.objects.filter(pk=invoice.pk)
+        .values_list("fiscal_status", flat=True)
+        .first()
+    )
+    invoice.fiscal_status = previous_fiscal_status
     invoice.status = InvoiceStatus.CANCELLED
     invoice.cancelled_at = timezone.now()
     invoice.cancelled_by = actor
     invoice.cancellation_reason = reason
     invoice.balance_due = ZERO
+
+    # A document still queued locally has never reached the OBR, so there is
+    # nothing to withdraw — drop it from the queue. One already declared must
+    # be withdrawn over the network, which the sweep does asynchronously so
+    # cancelling never blocks on a link being up.
+    if previous_fiscal_status == FiscalStatus.PENDING:
+        invoice.fiscal_status = FiscalStatus.NOT_REQUIRED
+
     invoice.save()
 
     if invoice.is_credit_sale:
@@ -495,7 +535,12 @@ def reverse_payment(payment: Payment, *, reason: str, actor=None) -> Payment:
 
 @transaction.atomic
 def issue_credit_note(
-    original: Invoice, *, lines: list[dict], reason: str, actor=None
+    original: Invoice,
+    *,
+    lines: list[dict],
+    reason: str,
+    reason_code: str = CreditNoteReason.OTHER,
+    actor=None,
 ) -> Invoice:
     """
     Issue a credit note against a posted invoice.
@@ -503,6 +548,10 @@ def issue_credit_note(
     This is the *only* lawful way to reduce an already-issued invoice. The
     note is a separate fiscal document in its own series, linked to the
     original so the pair reconciles.
+
+    Purely financial: crediting the customer never moves stock. When goods
+    have physically come back, `issue_credit_note_for_invoice` routes through
+    the sale return path instead, which is what knows the batches involved.
     """
     if not reason or not reason.strip():
         raise BusinessRuleViolation(
@@ -512,6 +561,13 @@ def issue_credit_note(
         raise InvalidStateTransition(
             _("A credit note can only be issued against a posted invoice."),
             details={"status": original.status},
+        )
+    # A credit note against a credit note has no meaning: the correction of a
+    # correction is a fresh invoice or debit note, not another credit.
+    if original.invoice_type == InvoiceType.CREDIT_NOTE:
+        raise BusinessRuleViolation(
+            _("A credit note cannot itself be credited."),
+            code="cannot_credit_a_credit_note",
         )
 
     note = create_invoice(
@@ -524,6 +580,8 @@ def issue_credit_note(
         original_invoice=original,
         actor=actor,
     )
+    note.credit_reason_code = reason_code
+    note.save(update_fields=["credit_reason_code"])
     post_invoice(note, actor=actor)
 
     # Offset the original: the credit reduces what the customer owes.
@@ -550,11 +608,131 @@ def issue_credit_note(
             "original_invoice": original.invoice_number,
             "amount": str(note.total_amount),
             "credited_against_original": str(credited),
+            "reason_code": reason_code,
         },
         notes=f"Credit note {note.invoice_number} issued against {original.invoice_number}: {reason}",
         actor=actor,
     )
     return note
+
+
+@transaction.atomic
+def issue_credit_note_for_invoice(
+    original: Invoice,
+    *,
+    lines: list[dict],
+    reason: str,
+    reason_code: str = CreditNoteReason.OTHER,
+    actor=None,
+) -> Invoice:
+    """
+    Issue a credit note against an invoice, reconciling stock when goods came back.
+
+    The entry point behind the invoice's "Issue credit note" action. It picks
+    one of two paths:
+
+    * Goods physically returned, and the invoice came from a sale — delegate
+      to `sales.process_return`, which restocks each line into the batch it
+      was actually issued from, quarantines what is unfit for resale, and
+      raises the credit note itself. Restocking has to happen there because
+      the batch allocations hang off the sale line, not the invoice line: an
+      invoice only carries batch numbers as printed text.
+
+    * Anything else — a pricing or quantity correction, a post-hoc discount,
+      or a returned-goods note on an invoice with no sale behind it — is a
+      purely financial correction and goes straight to `issue_credit_note`.
+
+    Lines carry `sale_line` and `restock` only in the first case; the
+    financial path ignores them.
+    """
+    wants_restock = (
+        reason_code in GOODS_RETURN_REASONS
+        and original.sale_id is not None
+        and any(line.get("sale_line") for line in lines)
+    )
+
+    if not wants_restock:
+        return issue_credit_note(
+            original,
+            lines=[_financial_line(line) for line in lines],
+            reason=reason,
+            reason_code=reason_code,
+            actor=actor,
+        )
+
+    from apps.sales.models import SaleLine
+    from apps.sales.services import process_return
+
+    # Only lines naming a sale line can be restocked; the rest would have no
+    # batch to return into. Refusing the mixed case outright keeps the two
+    # paths from silently splitting one correction across two documents.
+    unlinked = [line for line in lines if not line.get("sale_line")]
+    if unlinked:
+        raise BusinessRuleViolation(
+            _(
+                "Every line of a goods-return credit note must reference the sale "
+                "line it was billed from."
+            ),
+            code="sale_line_required",
+        )
+
+    sale_lines = {
+        sale_line.pk: sale_line
+        for sale_line in SaleLine.objects.filter(
+            pk__in=[line["sale_line"] for line in lines], sale_id=original.sale_id
+        ).select_related("product")
+    }
+
+    return_lines = []
+    for line in lines:
+        sale_line = sale_lines.get(line["sale_line"])
+        if sale_line is None:
+            # Either the id is unknown or it belongs to a different sale.
+            # Both mean the caller is crediting stock this invoice never sold.
+            raise BusinessRuleViolation(
+                _("Sale line %(id)s does not belong to the invoice being credited.")
+                % {"id": line["sale_line"]},
+                code="sale_line_mismatch",
+            )
+        return_lines.append(
+            {
+                "sale_line": sale_line,
+                "quantity": line["quantity"],
+                "restock": bool(line.get("restock", False)),
+                "condition_notes": line.get("condition_notes", ""),
+            }
+        )
+
+    sale_return = process_return(
+        original.sale,
+        lines=return_lines,
+        reason=reason,
+        actor=actor,
+        issue_credit_note=True,
+    )
+
+    if sale_return.credit_note is None:
+        # process_return only raises a note when the sale has an invoice
+        # attached. We reached here from that very invoice, so this means the
+        # link was severed underneath us rather than anything the user did.
+        raise BusinessRuleViolation(
+            _("The return was recorded but no credit note could be raised against this invoice."),
+            code="credit_note_not_raised",
+        )
+
+    note = sale_return.credit_note
+    note.credit_reason_code = reason_code
+    note.save(update_fields=["credit_reason_code"])
+    return note
+
+
+def _financial_line(line: dict) -> dict:
+    """Strip the goods-return keys `create_invoice` does not accept."""
+    return {
+        key: value
+        for key, value in line.items()
+        if key not in {"sale_line", "restock", "condition_notes"}
+    }
 
 
 @transaction.atomic
@@ -579,24 +757,62 @@ def mark_overdue_invoices() -> int:
     return count
 
 
-def register_print(invoice: Invoice, *, actor=None) -> Invoice:
+def register_print(invoice: Invoice, *, actor=None) -> int:
     """
-    Record that a fiscal document was printed.
+    Claim the next copy number for a fiscal document, and return it.
 
-    Reprints are counted so a duplicate can be marked as such on the PDF —
-    an unmarked second original is a fraud vector.
+    Returns the ordinal of *this* copy: 1 is the original, anything higher is
+    a reprint. The printed page does not distinguish them, so the counter and
+    its audit entries are the only record that a document was issued more than
+    once — which is what a reprint query has to rely on.
+
+    The number is claimed by an atomic increment and read back, rather than by
+    reading the counter and then incrementing it, so two concurrent prints
+    cannot both be recorded as copy #1.
     """
     invoice.print_count = F("print_count") + 1
     invoice.last_printed_at = timezone.now()
     invoice.save(update_fields=["print_count", "last_printed_at"])
     invoice.refresh_from_db(fields=["print_count"])
+    copy_number = invoice.print_count
 
     record(
         AuditAction.PRINT,
         Invoice._meta.label,
         entity_id=str(invoice.pk),
         entity_label=invoice.invoice_number,
-        notes=f"Document printed (copy #{invoice.print_count})",
+        notes=f"Document printed (copy #{copy_number})",
         actor=actor,
     )
-    return invoice
+    return copy_number
+
+
+def release_print(invoice: Invoice, copy_number: int, *, reason: str, actor=None) -> None:
+    """
+    Give back a copy number claimed for a document that was never produced.
+
+    `register_print` claims the number *before* rendering, so a render that
+    fails outright (typically the PDF engine missing on the host) would
+    otherwise leave the counter advanced, making the reprint history show
+    copies that were never actually produced.
+
+    The claim is released rather than the audit entry deleted: the log is a
+    hash chain, so the PRINT entry stays and a compensating note is appended
+    after it. The decrement is guarded to `print_count > 0` and applied as an
+    atomic F() update so a concurrent print that legitimately claimed a later
+    number is not clobbered.
+    """
+    updated = Invoice.objects.filter(pk=invoice.pk, print_count__gt=0).update(
+        print_count=F("print_count") - 1, updated_at=timezone.now()
+    )
+    if updated:
+        invoice.refresh_from_db(fields=["print_count"])
+
+    record(
+        AuditAction.PRINT,
+        Invoice._meta.label,
+        entity_id=str(invoice.pk),
+        entity_label=invoice.invoice_number,
+        notes=f"Print copy #{copy_number} released, not produced: {reason}",
+        actor=actor,
+    )

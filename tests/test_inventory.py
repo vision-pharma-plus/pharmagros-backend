@@ -11,9 +11,11 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from django.utils import timezone
 
 from apps.core.exceptions import BusinessRuleViolation, ExpiredBatchError, InsufficientStock
 from apps.inventory.models import BatchStatus, MovementType, StockBatch
+from apps.inventory.tasks import scan_expiry_horizons
 from apps.inventory.services import (
     adjust_stock,
     allocate_fifo,
@@ -346,3 +348,68 @@ class TestValuation:
         batch.save(update_fields=["status"])
         result = inventory_valuation()
         assert result["total_units"] == Decimal("0")
+
+
+class TestExpiryScanHorizons:
+    """
+    The scan must honour each product's own `expiry_alert_days`, which is
+    configured on the medicine form. Before this was wired up the field was
+    stored but ignored, so tuning it had no effect on when alerts fired.
+    """
+
+    def _receive(self, product, warehouse, supplier, officer, *, days_out, number):
+        return receive_stock(
+            product=product,
+            warehouse=warehouse,
+            batch_number=number,
+            expiry_date=timezone.localdate() + timedelta(days=days_out),
+            quantity=Decimal("10"),
+            unit_cost=Decimal("1000"),
+            supplier=supplier,
+            performed_by=officer,
+        )[0]
+
+    def test_short_horizon_product_is_silent_in_wide_bands(
+        self, product, warehouse, supplier, inventory_officer
+    ):
+        """A 30-day product must not be reported 120 days out."""
+        product.expiry_alert_days = 30
+        product.save(update_fields=["expiry_alert_days"])
+        self._receive(
+            product, warehouse, supplier, inventory_officer,
+            days_out=120, number="LOT-FAST",
+        )
+
+        results = scan_expiry_horizons()
+
+        assert results["180d"] == 0
+        assert results["90d"] == 0
+
+    def test_short_horizon_product_alerts_once_inside_its_window(
+        self, product, warehouse, supplier, inventory_officer
+    ):
+        """The same product does surface once expiry is within its 30 days."""
+        product.expiry_alert_days = 30
+        product.save(update_fields=["expiry_alert_days"])
+        self._receive(
+            product, warehouse, supplier, inventory_officer,
+            days_out=20, number="LOT-FAST",
+        )
+
+        results = scan_expiry_horizons()
+
+        assert results["30d"] == 1
+
+    def test_long_horizon_product_alerts_in_the_widest_band(
+        self, product, warehouse, supplier, inventory_officer
+    ):
+        """A slow mover on the 180-day default is flagged with runway to act."""
+        assert product.expiry_alert_days == 180
+        self._receive(
+            product, warehouse, supplier, inventory_officer,
+            days_out=120, number="LOT-SLOW",
+        )
+
+        results = scan_expiry_horizons()
+
+        assert results["180d"] == 1

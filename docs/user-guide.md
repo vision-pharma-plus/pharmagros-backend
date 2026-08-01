@@ -24,7 +24,7 @@
 9. Catalogue: Medicines, Categories, Manufacturers
 10. Inventory: Receive stock, Stock levels, Batches, Movements, Warehouses, Expiry, Reconciliation
 11. Sales: New sale, Sales list, Returns
-12. Invoicing: Invoices, Invoice detail, Payments
+12. Invoicing: Invoices, Invoice detail, Payments, Declaring to the OBR
 13. Purchasing: Purchase orders, New/Edit order, Order detail, Goods receipts
 14. Partners: Customers, Suppliers
 15. Reports
@@ -121,6 +121,10 @@ These are in alphabetical order. If a word on screen confuses you, look here fir
 
 **Landed cost.** What a product really cost you, including not just the supplier's price but also freight, customs duty, and other charges spread across the delivery. This is the honest cost used for valuing your stock.
 
+**Reference cost.** The typical purchase price recorded against a product in the catalogue. It is used to work out the margin shown on the product page, to warn you when you price below cost, and to pre-fill the cost when you raise an order or receive a delivery. It is a guide, not a valuation: your stock is worth what its batches cost, not what this field says. Contrast **supplier unit cost** and **landed cost**.
+
+**Supplier unit cost.** The price a particular supplier charges per unit on a particular purchase order. This is a real price on a real document, unlike the catalogue's reference cost, and it is what the delivered batch is valued at before freight and duty are added.
+
 **Ledger (stock ledger).** The permanent, running list of every single stock movement ever made. Like a bank statement for stock. Nothing is ever deleted from it; mistakes are corrected by adding a new correcting entry.
 
 **Movement.** One entry in the stock ledger: a receipt, a sale, a transfer, an adjustment, and so on. Each has a plus or minus quantity.
@@ -128,6 +132,12 @@ These are in alphabetical order. If a word on screen confuses you, look here fir
 **NIF (*Numéro d'Identification Fiscale*).** A customer's tax identification number, issued by the OBR. A customer buying on credit must have one, because their invoice is a tax document.
 
 **OBR (*Office Burundais des Recettes*).** The Burundian tax authority.
+
+**Declaration (of an invoice).** Sending an invoice electronically to the OBR. It happens automatically in the background a few minutes after you post, so it never holds up a sale. See section 12.4.
+
+**Fiscal signature.** The code identifying an invoice to the OBR, made from the pharmacy's NIF, the OBR's identifier for this software, the invoice date and the invoice number. Worked out on this computer at the moment you post, with no internet needed.
+
+**Fiscal status.** Whether an invoice has reached the OBR yet. Separate from the invoice's ordinary status: one is about the tax authority, the other about the money.
 
 **Payment terms.** When a customer must pay. "Cash" means immediately. "NET 30" means within 30 days of the invoice date. Also available: NET 7, NET 15, NET 45, NET 60, NET 90.
 
@@ -288,24 +298,37 @@ The BIF has no small change in circulation, so every printed invoice shows whole
 
 So the system calculates with four decimal places internally and rounds once, at the point where the document is produced. This is why the total on an invoice always exactly equals the sum of its lines. An auditor checks this, and it will always add up.
 
+### VAT is already inside the price you enter
+
+Catalogue prices are **VAT-inclusive**. Before a line is calculated, the system separates the tax that is already in the price:
+
+- **Tax-exclusive base** = price ÷ (1 + VAT rate)
+- A product at 1,180 BIF with 18% VAT has a base of 1,000 and carries 180 of VAT.
+- A VAT-exempt product has nothing to separate, so its base equals its price.
+
+This happens once, at the moment a catalogue price becomes a sale line. Everything after that — discounts, totals, the tax summary, and what is filed with the OBR — works on the tax-exclusive base, which is what the tax authority requires.
+
 ### Discount comes first, then VAT
 
 The order is fixed and cannot be changed:
 
-1. Start with quantity multiplied by unit price. This is the **gross line**.
+1. Start with quantity multiplied by the tax-exclusive unit price. This is the **gross line**.
 2. Subtract the discount percentage. This gives the **net line**.
 3. Apply VAT to the net line.
 4. The result is the **line total**.
 
-Worked example: 100 units at 1,000 BIF, with a 10% discount and 18% VAT.
+Worked example: 100 units of a product priced at **1,180 BIF including VAT**, with a 10% discount and 18% VAT.
 
 | Step | Calculation | Result |
 |---|---|---|
+| Tax-exclusive price | 1,180 ÷ 1.18 | 1,000 |
 | Gross | 100 × 1,000 | 100,000 |
 | Discount | 10% of 100,000 | −10,000 |
 | Net | | 90,000 |
 | VAT | 18% of 90,000 | +16,200 |
 | **Line total** | | **106,200** |
+
+Without the discount, the same 100 units would total exactly 118,000 — the shelf price times the quantity, which is the point of pricing this way.
 
 Applying VAT before the discount would charge the customer VAT on money they never paid. That is a tax compliance error, not a matter of preference, which is why the order is not adjustable.
 
@@ -347,7 +370,7 @@ Cannot: sell anything, touch prices, or approve anything.
 
 **Store Manager.** Everything an Inventory Officer can do, plus oversight.
 
-Adds: approve stock adjustments, dispose of stock, **see inventory valuation**, manage warehouses, create and edit purchase orders, **approve purchase orders**, cancel orders, record supplier invoices, create and edit suppliers, view sales, **see profit margins**, view sales and financial reports, and export data.
+Adds: approve stock adjustments, dispose of stock, **see inventory valuation**, manage warehouses, create and edit purchase orders, **approve purchase orders**, cancel orders, record supplier invoices, create and edit suppliers, view sales, **see profit margins**, **re-declare an invoice to the OBR**, view sales and financial reports, and export data.
 
 > **Worth planning for.** A Store Manager can both raise and approve purchase orders, but never the same one — the system refuses self-approval. If you have only one Store Manager, every order they raise needs a second person with approval authority, or procurement stalls. Make sure at least two people can approve, or that an administrator is available to.
 
@@ -623,15 +646,23 @@ The **product code** is not on this form. The system allocates it automatically 
 
 **Pricing and VAT**
 
+> **Selling prices are entered VAT-inclusive (TTC).** Type the price the customer actually pays at the counter — the price on the shelf edge. Do not subtract VAT yourself; the system works out the tax-exclusive base and shows it under the field as you type.
+
 | Field | Required | Meaning |
 |---|---|---|
-| Unit cost (BIF) | Yes | What you pay for one unit. |
-| Selling price (BIF) | Yes | Your standard price. |
-| Wholesale price (BIF) | No | An alternative price for large customers. |
+| Reference cost (BIF) | Yes | What you normally pay for one unit, **excluding VAT**. |
+| Selling price (BIF) | Yes | Your standard price, **VAT included**. |
+| Wholesale price (BIF) | No | An alternative price for large customers, **VAT included**. |
 | VAT rate % | Yes | The tax rate for this product. |
 | VAT exempt | Tick box | Tick if the product carries no VAT. |
 
-If you set a selling price below the unit cost, the system **warns you but allows it**. This is deliberate: selling below cost is a legitimate business decision when clearing short-dated stock, so the system flags it rather than blocking it.
+Reference cost is the one price on this form that excludes VAT, because it is what your supplier charges you before tax. The two selling prices include it.
+
+> **Reference cost is not what your stock is worth.** It is a typical figure used for three things: working out the margin shown on the product page, warning you if you price below cost, and pre-filling the cost when you raise a purchase order or receive a delivery. What your stock is actually valued at is the cost of each batch, taken from the delivery it arrived on. Two batches of the same product bought at different prices keep their own costs. Changing the reference cost here never re-values stock you already hold.
+
+Worked example: a product sold at **180 BIF** with 18% VAT. You type 180. The system stores a tax-exclusive base of 152.5424 and records 27.4576 of VAT, and the customer is billed exactly 180. A VAT-exempt product has no tax to separate, so what you type is what is stored.
+
+If you set a selling price below the reference cost, the system **warns you but allows it**. This is deliberate: selling below cost is a legitimate business decision when clearing short-dated stock, so the system flags it rather than blocking it. The comparison is made after VAT is removed, so that a thin margin is not hidden by the tax.
 
 **Stock settings**
 
@@ -762,7 +793,7 @@ It matters because that stock was counted off your own shelves, not bought from 
 | **Batch number** | Yes | **Copy this exactly from the carton.** This is the traceability link. |
 | **Expiry date** | Yes | From the carton. |
 | **Quantity** | Yes | What actually arrived. |
-| Unit cost | No | Pre-filled from the catalogue or the order. Change it if the supplier invoiced differently. |
+| Unit cost | No | Pre-filled from the order, or from the catalogue's reference cost in direct mode. Change it if the supplier invoiced differently — what you leave here is what this batch is valued at. |
 | Manufacturing date | No | If shown on the carton. |
 | Warehouse | No | Leave as *Same as above* unless this line goes elsewhere. |
 
@@ -1003,11 +1034,13 @@ One block per product. **Add line** adds another; the bin icon removes one (you 
 |---|---|
 | **Name** | Search and select the product. Only active products appear. |
 | **Quantity** | How many units. |
-| **Unit price** | Pre-filled from the catalogue. You can change it. |
+| **Unit price (VAT incl.)** | Pre-filled from the catalogue. You can change it. Enter the price the customer pays, VAT included — the same basis as the catalogue. |
 | **Discount %** | **Greyed out unless you have the apply discount permission.** If greyed, it says "You do not have permission to apply a discount." |
 | **Line total** | Calculated live as you type. |
 
 The VAT rate comes from the product itself, so a VAT-exempt product stays exempt and the preview total is right.
+
+If you override the unit price, type the VAT-inclusive figure you quoted the customer. The system separates the tax from it exactly as it does for a catalogue price, so a line priced at 180 bills 180.
 
 #### The totals panel
 
@@ -1174,6 +1207,48 @@ To apply a payment to one specific invoice instead, record it from that invoice'
 
 **Reversing a payment.** The undo arrow reverses a payment, for example when a cheque bounces. A **reason is compulsory**. The payment is not deleted; it is marked Reversed and the reversal is recorded. The customer's balance goes back up.
 
+### 12.4 Declaring invoices to the OBR
+
+**Permission needed:** declare invoice to OBR (store managers and administrators)
+
+Burundi requires sales documents to be declared electronically to the OBR. When this is switched on, the system handles it for you. Most days you will never think about it — this section is for the days you do.
+
+**What happens when you post an invoice.** The invoice is given a **fiscal signature**: a code built from the pharmacy's NIF, the identifier the OBR issued when this software was approved, the invoice date, and the invoice number. It looks like this:
+
+> `4001902867/SYS-0042/2026-08-01/FAC-2026-000148`
+
+The signature is worked out on this computer. It does **not** need the internet. This matters: a customer at the counter is never kept waiting because the connection to Bujumbura is slow or down.
+
+**When the declaration is actually sent.** Every ten minutes the system sends any invoices that are waiting. If the connection is down, they simply wait and go out when it returns. Nothing is lost and nobody has to remember to do anything.
+
+**The fiscal status.** Separate from the ordinary invoice status, because they answer different questions. "Paid" tells you about the money. The fiscal status tells you about the tax authority.
+
+| Fiscal status | What it means | Do you need to act? |
+|---|---|---|
+| **Not declarable** | This document is not declared. Proformas, and anything dated before the system went live. | No |
+| **Awaiting declaration** | Posted and queued. It will be sent within a few minutes. | No |
+| **Declared to OBR** | Accepted. The OBR registration number is on the invoice. | No |
+| **Rejected by OBR** | The OBR refused it, and the system has stopped retrying. | **Yes** |
+| **Cancellation declared** | The invoice was cancelled and the OBR has been told. | No |
+
+**Why "Awaiting declaration" is normal.** An invoice sitting in this state for a few minutes is the system working correctly. It only deserves attention if it stays there for hours, which means the connection has been down that long.
+
+**What "Rejected" means and what to do.** The system tries several times, waiting longer between each attempt. If it still cannot get the invoice accepted, it stops and marks it Rejected rather than retrying forever. You will get a notification.
+
+Rejection almost always means something on the invoice does not match what the OBR expects — commonly a customer NIF that is wrong or missing. To deal with it:
+
+1. Open the invoice. The reason the OBR gave is shown on screen.
+2. Fix the underlying cause. If it is the customer's NIF, correct it on the customer record.
+3. Click **Declare to OBR** on the invoice to try again immediately.
+
+You do not have to wait for the next automatic attempt, and you do not need to cancel and reissue the invoice.
+
+**A rejected invoice is still a valid invoice.** It is posted, it is numbered, the customer owes the money. What is missing is the declaration. Do not cancel it and start again — that would break the numbering sequence for no reason.
+
+**On the printed invoice.** Once the OBR has accepted a document, its PDF carries the fiscal signature, the OBR registration number, and the OBR's electronic signature in a box near the bottom. Before acceptance these are not printed, because printing a registration number for a filing that has not happened yet would be misleading.
+
+**Cancelling a declared invoice.** If you cancel an invoice the OBR has already accepted, the system tells the OBR to withdraw it. This happens automatically in the background, the same way declarations do. If the invoice had not yet been sent, it is simply removed from the queue — there is nothing to withdraw.
+
 ---
 
 ## 13. Purchasing
@@ -1242,9 +1317,13 @@ One block per product, with **Add a line** underneath.
 |---|---|---|
 | Medicine | Yes | Search by name or code. If it is not in the catalogue, choose **＋ New medicine** to create it here without losing the order. |
 | Quantity ordered | Yes | |
-| Unit cost | Yes | What you expect to pay per unit. |
+| Supplier unit cost | Yes | What this supplier is charging you per unit on this order. |
 | Discount % | No | Any agreed discount on this line. |
 | Minimum acceptable expiry | No | See below. |
+
+**Supplier unit cost is pre-filled, and you are expected to change it.** When you pick a product, the system fills this in from the catalogue's reference cost and shows that reference underneath the field. It is a starting point, not the price. Type what the supplier actually quoted — that figure is what the order is placed at, what the supplier is paid, and what the delivered batch is valued at. The catalogue reference is left alone.
+
+**A line cannot be ordered at zero.** If the cost is blank or zero, the order will not save and the reason appears at the bottom of the form. A zero-cost line would produce goods that appear to have cost nothing, which understates what your stock is worth for as long as that batch is held.
 
 **Minimum acceptable expiry is worth setting.** It is the earliest expiry date you are willing to accept for this product. When the delivery arrives, anything shorter-dated is **refused at receipt**, on screen, while the driver is still there. Without it, short-dated stock is accepted quietly and becomes a write-off later.
 
@@ -1326,7 +1405,7 @@ This is a deliberate financial control. One person alone must never be able to b
 
 **Why landed cost is separated.** Landed cost is what reaches the batch cost, and therefore what your stock is really valued at and what your margin is really calculated from. A product bought at 1,000 BIF with 200 BIF of freight and duty per unit costs you 1,200. Selling at 1,100 looks like profit against the purchase price and is actually a loss. Landed cost is why the system knows the difference. The freight and duty are spread across the delivery in proportion to value.
 
-**Line items table:** product, quantity ordered, quantity received, quantity outstanding, unit cost, and total. Outstanding is shown in bold when there is still something to come.
+**Line items table:** product, quantity ordered, quantity received, quantity outstanding, supplier unit cost, and total. Outstanding is shown in bold when there is still something to come.
 
 ### 13.4 Receiving goods against an order
 
@@ -1697,6 +1776,18 @@ Read-only. Shows your employee number, your last sign-in, and the roles you hold
 | Overdue | Past its due date with money still owed. |
 | Cancelled | Voided. |
 
+**Invoice fiscal statuses (OBR declaration)**
+
+Separate from the statuses above: these say whether the tax authority has the invoice, not whether the customer has paid. See section 12.4.
+
+| Status | Meaning | Act? |
+|---|---|---|
+| Not declarable | Not sent to the OBR: proformas, and anything predating go-live. | No |
+| Awaiting declaration | Queued. Goes out within a few minutes. | No |
+| Declared to OBR | Accepted; registration number recorded and printed. | No |
+| Rejected by OBR | Refused, and retrying has stopped. Fix the cause, then re-declare. | **Yes** |
+| Cancellation declared | Cancelled, and the OBR has been told. | No |
+
 **Sale statuses**
 
 | Status | Meaning |
@@ -1764,6 +1855,10 @@ Read-only. Shows your employee number, your last sign-in, and the roles you hold
 | *The submitted data is invalid.* | One or more fields are wrong. | The specific errors appear beside the fields concerned. |
 | *An unexpected error occurred. Please contact support.* | A fault in the system. | Note the time and what you were doing, and report it. |
 | *Cannot reach the server. Check your connection.* | Network problem. | Check your internet connection and try again. Your unsaved work may be lost. |
+| *The OBR rejected this declaration: …* | The tax authority refused the invoice, and the reason it gave follows. Usually a customer NIF that is missing or does not match their records. | Correct the cause, then click Declare to OBR on the invoice. Do not cancel and reissue. |
+| *A NIF is required to post a credit invoice.* | A credit sale must identify the customer, because the invoice is a tax document. | Add the customer's NIF to their record, then post. |
+| *The OBR system identifier is not configured.* | The system has not been given the identifier the OBR issues on approval, so signatures cannot be built. | A setup task, not a daily one. Tell your administrator. |
+| *OBR declaration is not enabled in this environment.* | Electronic declaration is switched off. | Expected if you are not yet declaring electronically. Otherwise tell your administrator. |
 
 ### Things that look wrong but are not
 
@@ -1777,6 +1872,9 @@ These produce no error message, which is precisely why they cause confusion.
 | **The medicine's Batches card is empty.** | The product exists but nothing has been received against it. | Receive some stock, or check you are looking at the right product. |
 | **My purchase order has no Edit button.** | It has been approved. An approval is somebody's signature on specific quantities and prices, so it can no longer be changed. | If it is wrong, cancel it and raise a new one. Drafts and rejected orders can still be edited. |
 | **The supplier I want is not in the list on a purchase order.** | Only **approved** suppliers can be ordered from. | Ask someone with supplier permissions to approve them first. |
+| **My invoice says "Awaiting declaration".** | Normal. Declarations go out every few minutes, not the instant you post. | Nothing. Only worth asking about if it stays that way for hours, which means the connection has been down that long. |
+| **The invoice PDF has no OBR registration number.** | The OBR has not accepted it yet. Printing a registration number before the filing exists would be misleading. | Print again once the fiscal status reads "Declared to OBR". |
+| **I cancelled an invoice but its fiscal status still says "Declared to OBR".** | Correct. The OBR has to be told separately, and that goes out in the background. | Nothing. It becomes "Cancellation declared" once the OBR confirms. |
 
 ---
 
@@ -1895,7 +1993,7 @@ Requires the raise purchase orders permission.
 1. Purchasing → Purchase orders → **New purchase order**.
 2. Choose an **approved** supplier and the delivery warehouse. If the supplier is not listed, they must be approved first.
 3. Set the expected delivery date, or leave it blank to use the supplier's usual lead time.
-4. Add each product with its quantity and unit cost. Use **＋ New medicine** if something is not catalogued yet.
+4. Add each product with its quantity. The supplier unit cost is pre-filled from the catalogue — replace it with what the supplier actually quoted. Use **＋ New medicine** if something is not catalogued yet.
 5. Set a **minimum acceptable expiry** on any line where short-dated stock would be a problem. Anything shorter is refused when the delivery arrives.
 6. Add freight, customs duty, and other charges if you know them.
 7. Click **Save and submit** to send it for approval, or **Save draft** to finish it later.
@@ -1979,7 +2077,7 @@ Requires create medicine.
 
 1. Catalogue → Medicines → New.
 2. Fill in identification: name, dosage form, category, unit.
-3. Enter unit cost, selling price, and VAT rate.
+3. Enter reference cost, selling price, and VAT rate.
 4. Set the reorder level and safety stock.
 5. Choose the storage conditions.
 6. Tick prescription required and controlled substance where they apply.

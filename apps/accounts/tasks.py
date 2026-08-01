@@ -36,7 +36,7 @@ def send_password_reset_email(user_id: str, uid: str, token: str) -> bool:
                 "validity_hours": 24,
             }
             send_mail(
-                subject=_("%(company)s — Password reset")
+                subject=_("%(company)s : Password reset")
                 % {"company": settings.COMPANY["NAME"]},
                 message=render_to_string("emails/password_reset.txt", context),
                 from_email=settings.DEFAULT_FROM_EMAIL,

@@ -9,6 +9,8 @@ is readable, while remaining line-for-line reconcilable with the French one.
 
 from __future__ import annotations
 
+import logging
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.translation import gettext as _
@@ -17,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.audit import record
+from apps.core.exceptions import ServiceUnavailable
 from apps.core.models import AuditAction
 from apps.core.permissions import HasPermission
 
@@ -34,6 +37,8 @@ from .serializers import (
     SalesReportSerializer,
     ValuationReportSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_date(value, default=None):
@@ -56,6 +61,23 @@ class _ReportView(APIView):
     permission_classes = [HasPermission]
     throttle_scope = "reports"
     report_name = "report"
+
+    def handle_exception(self, exc):
+        """
+        Translate a missing PDF engine into a 503 with setup instructions.
+
+        Handled once here rather than at each `export(...)` call site: every
+        report view offers `?export=pdf`, and the failure is identical for all
+        of them. Without this the raw OSError from WeasyPrint's native loader
+        surfaces as a generic 500, which tells the operator nothing about the
+        GTK runtime being absent.
+        """
+        from apps.invoicing.pdf import PDFEngineUnavailable
+
+        if isinstance(exc, PDFEngineUnavailable):
+            logger.exception("Report PDF rendering is unavailable")
+            exc = ServiceUnavailable(str(exc))
+        return super().handle_exception(exc)
 
     def audit_export(self, request, fmt: str, row_count: int) -> None:
         if fmt == "json":

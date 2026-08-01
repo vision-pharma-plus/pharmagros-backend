@@ -89,7 +89,6 @@ def run() -> bool:
         # PDF template strings.
         check("PDF: invoice", _("Invoice"), "Facture")
         check("PDF: billed to", _("Billed to"), "Facturé à")
-        check("PDF: duplicate stamp", _("DUPLICATE"), "DUPLICATA")
         check("PDF: cancelled stamp", _("CANCELLED"), "ANNULÉE")
         check("PDF: amount in words", _("Amount in words"), "Arrêté à la somme de")
 
@@ -116,7 +115,6 @@ def run() -> bool:
             _("Insufficient stock available to fulfil this request."),
             "Insufficient stock available to fulfil this request.",
         )
-        check("PDF stamp", _("DUPLICATE"), "DUPLICATE")
 
     print()
     print("=" * 70)

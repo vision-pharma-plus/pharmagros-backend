@@ -107,6 +107,12 @@ DEFAULT_SEQUENCES = [
     {"key": "sales.credit_note", "prefix": "NC-{yyyy}-", "label": "Note de crédit"},
     {"key": "sales.debit_note", "prefix": "ND-{yyyy}-", "label": "Note de débit"},
     {"key": "sales.receipt", "prefix": "REC-{yyyy}-", "label": "Reçu de paiement"},
+    # Distinct from `sales.receipt` above, which numbers the payment receipts
+    # issued when a *credit* invoice is settled. This series numbers the cash
+    # sale receipt itself — the primary document of a counter sale. Two
+    # different documents in two different series, kept apart so neither
+    # renumbers the other.
+    {"key": "sales.sales_receipt", "prefix": "RV-{yyyy}-", "label": "Reçu de vente"},
     {"key": "sales.return", "prefix": "RET-{yyyy}-", "label": "Retour client"},
     {"key": "purchasing.order", "prefix": "BC-{yyyy}-", "label": "Bon de commande"},
     {"key": "purchasing.requisition", "prefix": "DA-{yyyy}-", "label": "Demande d'achat"},

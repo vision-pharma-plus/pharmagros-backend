@@ -40,6 +40,46 @@ class InvoiceType(models.TextChoices):
     DEBIT_NOTE = "DEBIT_NOTE", _("Debit note")
 
 
+class CreditNoteReason(models.TextChoices):
+    """
+    Why an issued invoice is being corrected.
+
+    Recorded alongside the free-text reason because two of these —
+    GOODS_RETURNED and GOODS_DAMAGED — mean stock physically came back and
+    must be reconciled, while the rest are purely financial corrections.
+    Deriving that from prose would be guesswork.
+    """
+
+    WRONG_QUANTITY = "WRONG_QUANTITY", _("Wrong quantity invoiced")
+    WRONG_PRICE = "WRONG_PRICE", _("Wrong unit price charged")
+    GOODS_RETURNED = "GOODS_RETURNED", _("Goods returned by customer")
+    GOODS_DAMAGED = "GOODS_DAMAGED", _("Goods damaged or defective")
+    DISCOUNT_GRANTED = "DISCOUNT_GRANTED", _("Discount or rebate granted")
+    OTHER = "OTHER", _("Other")
+
+
+# The reasons that mean physical stock came back and inventory must be
+# reconciled, rather than a purely financial correction.
+GOODS_RETURN_REASONS = (CreditNoteReason.GOODS_RETURNED, CreditNoteReason.GOODS_DAMAGED)
+
+
+class FiscalStatus(models.TextChoices):
+    """
+    Where a document stands with the OBR.
+
+    Deliberately separate from `InvoiceStatus`: commercial state (is it paid?)
+    and fiscal state (is it declared?) move independently. An invoice can be
+    settled in full while its declaration is still queued behind a network
+    outage, and conflating the two would make either question unanswerable.
+    """
+
+    NOT_REQUIRED = "NOT_REQUIRED", _("Not declarable")
+    PENDING = "PENDING", _("Awaiting declaration")
+    DECLARED = "DECLARED", _("Declared to OBR")
+    REJECTED = "REJECTED", _("Rejected by OBR")
+    CANCELLED = "CANCELLED", _("Cancellation declared")
+
+
 class PaymentMethod(models.TextChoices):
     CASH = "CASH", _("Cash")
     BANK_TRANSFER = "BANK_TRANSFER", _("Bank transfer")
@@ -77,6 +117,16 @@ class Invoice(BaseModel):
     sale = models.OneToOneField(
         "sales.Sale", on_delete=models.PROTECT, related_name="invoice",
         null=True, blank=True, verbose_name=_("sale"),
+    )
+    # Set when this invoice was raised for a sale already settled and receipted
+    # at the counter. It is the audit trail for the second document: it says
+    # this invoice records the *same* transaction as that receipt rather than a
+    # new one, which is what stops the sale being counted twice in revenue.
+    # Stock, VAT and accounting entries were all posted when the receipt was
+    # issued; nothing is re-posted here.
+    source_receipt = models.OneToOneField(
+        "sales.SalesReceipt", on_delete=models.PROTECT, related_name="issued_invoice",
+        null=True, blank=True, verbose_name=_("source receipt"),
     )
 
     # --- Customer identity, frozen at issue -------------------------------
@@ -126,8 +176,8 @@ class Invoice(BaseModel):
     cancellation_reason = models.CharField(_("cancellation reason"), max_length=255, blank=True)
 
     # Print/email history is a compliance concern: reprints of a fiscal
-    # document must be traceable, and a reprint is visually marked as a
-    # duplicate so it cannot be passed off as an original.
+    # document must be traceable. The printed page is identical on every copy,
+    # so this counter and its audit entries are the whole reprint record.
     print_count = models.PositiveIntegerField(_("times printed"), default=0)
     last_printed_at = models.DateTimeField(_("last printed"), null=True, blank=True)
     emailed_at = models.DateTimeField(_("emailed at"), null=True, blank=True)
@@ -136,6 +186,42 @@ class Invoice(BaseModel):
     original_invoice = models.ForeignKey(
         "self", on_delete=models.PROTECT, null=True, blank=True,
         related_name="corrections", verbose_name=_("original invoice"),
+    )
+    # Why the correction was issued. Blank on ordinary invoices.
+    credit_reason_code = models.CharField(
+        _("correction reason"), max_length=20,
+        choices=CreditNoteReason.choices, blank=True, db_index=True,
+    )
+
+    # --- OBR declaration --------------------------------------------------
+    # The signature is computed locally at posting time and never changes
+    # afterwards; the remaining fields are filled in from the OBR's reply
+    # once the document has been accepted.
+    fiscal_status = models.CharField(
+        _("fiscal status"), max_length=16, choices=FiscalStatus.choices,
+        default=FiscalStatus.NOT_REQUIRED, db_index=True,
+    )
+    fiscal_signature = models.CharField(
+        _("fiscal signature"), max_length=128, blank=True, db_index=True,
+        help_text=_("Identifier under which this document is declared to the OBR."),
+    )
+    obr_registered_number = models.CharField(
+        _("OBR registration number"), max_length=64, blank=True,
+    )
+    obr_registered_at = models.DateTimeField(
+        _("OBR registration date"), null=True, blank=True,
+    )
+    obr_electronic_signature = models.TextField(
+        _("OBR electronic signature"), blank=True,
+        help_text=_("Returned by the OBR on acceptance; printed on the customer document."),
+    )
+    declared_at = models.DateTimeField(_("declared at"), null=True, blank=True)
+    declaration_attempts = models.PositiveIntegerField(_("declaration attempts"), default=0)
+    last_declaration_error = models.TextField(_("last declaration error"), blank=True)
+    # Set when a cancellation has been declared, so a document withdrawn at
+    # the OBR is distinguishable from one merely cancelled in our books.
+    cancellation_declared_at = models.DateTimeField(
+        _("cancellation declared at"), null=True, blank=True,
     )
 
     class Meta:
@@ -163,6 +249,11 @@ class Invoice(BaseModel):
             models.Index(fields=["customer", "-invoice_date"], name="idx_invoice_customer_date"),
             models.Index(fields=["status", "due_date"], name="idx_invoice_status_due"),
             models.Index(fields=["-invoice_date"], name="idx_invoice_date"),
+            # The declaration sweep filters on exactly this pair, and it runs
+            # often enough that a scan of the whole table would be felt.
+            models.Index(
+                fields=["fiscal_status", "invoice_date"], name="idx_invoice_fiscal_status"
+            ),
         ]
 
     def __str__(self) -> str:
@@ -197,6 +288,29 @@ class Invoice(BaseModel):
         if self.total_amount <= 0:
             return Decimal("0")
         return (self.paid_amount / self.total_amount) * Decimal("100")
+
+    @property
+    def is_declared(self) -> bool:
+        return self.fiscal_status in (FiscalStatus.DECLARED, FiscalStatus.CANCELLED)
+
+    @property
+    def needs_declaration(self) -> bool:
+        return self.fiscal_status == FiscalStatus.PENDING
+
+    @property
+    def declaration_exhausted(self) -> bool:
+        """
+        True once retrying is no longer worthwhile.
+
+        Read by the sweep to leave a document alone, and by the dashboard to
+        surface it for manual attention.
+        """
+        from django.conf import settings
+
+        return (
+            self.fiscal_status == FiscalStatus.REJECTED
+            and self.declaration_attempts >= settings.OBR["MAX_ATTEMPTS"]
+        )
 
 
 class InvoiceLine(models.Model):
@@ -351,3 +465,78 @@ class PaymentAllocation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.payment.reference} → {self.invoice.invoice_number}: {self.amount}"
+
+
+class FiscalRequestOutcome(models.TextChoices):
+    IN_FLIGHT = "IN_FLIGHT", _("In flight")
+    SUCCEEDED = "SUCCEEDED", _("Succeeded")
+    FAILED = "FAILED", _("Failed")
+
+
+class FiscalRequestLog(models.Model):
+    """
+    One exchange with the OBR, recorded verbatim.
+
+    Kept deliberately outside the invoice row. When our records and the
+    OBR's disagree about what was filed, this table is the evidence, and it
+    has to show every attempt — including the ones that failed and the ones
+    that never came back — not merely the final state. Rows are written
+    before the request goes out for exactly that reason.
+
+    Not a BaseModel: these are machine-generated transport records, never
+    soft-deleted or edited by a user, and there is no actor to stamp.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    invoice = models.ForeignKey(
+        Invoice, on_delete=models.CASCADE, related_name="fiscal_requests",
+        null=True, blank=True, verbose_name=_("invoice"),
+    )
+    operation = models.CharField(_("operation"), max_length=32, db_index=True)
+    endpoint = models.URLField(_("endpoint"), max_length=255)
+
+    request_body = models.JSONField(_("request body"), null=True, blank=True)
+    response_body = models.JSONField(_("response body"), null=True, blank=True)
+    status_code = models.PositiveSmallIntegerField(_("HTTP status"), null=True, blank=True)
+    outcome = models.CharField(
+        _("outcome"), max_length=12, choices=FiscalRequestOutcome.choices,
+        default=FiscalRequestOutcome.IN_FLIGHT, db_index=True,
+    )
+    error_message = models.TextField(_("error"), blank=True)
+
+    started_at = models.DateTimeField(_("started at"), auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(_("completed at"), null=True, blank=True)
+
+    class Meta:
+        verbose_name = _("OBR request log")
+        verbose_name_plural = _("OBR request log")
+        ordering = ("-started_at",)
+        indexes = [
+            models.Index(fields=["invoice", "-started_at"], name="idx_fiscal_req_invoice"),
+            models.Index(fields=["outcome", "-started_at"], name="idx_fiscal_req_outcome"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.operation} {self.outcome} @ {self.started_at:%Y-%m-%d %H:%M:%S}"
+
+    def mark_succeeded(self, status_code: int, body) -> None:
+        self.status_code = status_code
+        self.response_body = body if isinstance(body, (dict, list)) else {"raw": str(body)[:5000]}
+        self.outcome = FiscalRequestOutcome.SUCCEEDED
+        self.completed_at = timezone.now()
+        self.save(
+            update_fields=["status_code", "response_body", "outcome", "completed_at"]
+        )
+
+    def mark_failed(self, message: str, *, status_code: int | None = None, body=None) -> None:
+        self.status_code = status_code
+        if body is not None:
+            self.response_body = body if isinstance(body, (dict, list)) else {"raw": str(body)[:5000]}
+        self.outcome = FiscalRequestOutcome.FAILED
+        self.error_message = (message or "")[:5000]
+        self.completed_at = timezone.now()
+        self.save(
+            update_fields=[
+                "status_code", "response_body", "outcome", "error_message", "completed_at",
+            ]
+        )

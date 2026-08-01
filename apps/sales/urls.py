@@ -1,11 +1,17 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .api import RecallTraceView, SaleReturnViewSet, SaleViewSet
+from .api import (
+    RecallTraceView,
+    SaleReturnViewSet,
+    SalesReceiptViewSet,
+    SaleViewSet,
+)
 
 router = DefaultRouter()
 router.register("sales", SaleViewSet, basename="sale")
 router.register("returns", SaleReturnViewSet, basename="sale-return")
+router.register("receipts", SalesReceiptViewSet, basename="sales-receipt")
 
 urlpatterns = [
     path("recall-trace/", RecallTraceView.as_view(), name="recall-trace"),

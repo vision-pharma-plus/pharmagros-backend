@@ -53,7 +53,7 @@ console email backend. No `.env` file is required for this path.
 `seed_demo` creates a single administrator and prints the login:
 
 ```
-admin@pharmagros.bi / Demo!2026#Pharma
+visionpharmaplus@gmail.com / Demo!2026#Pharma
 ```
 
 Change this password before any real deployment. Re-running `seed_demo` is
@@ -132,7 +132,7 @@ API modules are mounted under `/api/v1/`: `auth/`, `catalog/`, `partners/`,
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/login/ \
   -H "Content-Type: application/json" \
-  -d "{\"email\":\"admin@pharmagros.bi\",\"password\":\"Demo!2026#Pharma\"}"
+  -d "{\"email\":\"visionpharmaplus@gmail.com\",\"password\":\"Demo!2026#Pharma\"}"
 ```
 
 Send the returned access token as `Authorization: Bearer <token>` and refresh it

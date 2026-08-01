@@ -1,0 +1,108 @@
+# Development stack: backend + Postgres, in containers.
+#
+# Why this file exists: WeasyPrint's Python package is only a binding. PDF
+# rendering also needs native Pango/Cairo/GLib libraries, which are not present
+# on a stock Windows host — that is the 503 the invoice and report PDF
+# endpoints return there. The image built from ./Dockerfile installs those
+# libraries and fonts-dejavu-core (the font the templates ask for), so the same
+# code renders correctly inside the container.
+#
+# Uses config.settings.dev: real Postgres and DEBUG on, with Celery running
+# inline so no worker container is needed to exercise the app by hand.
+#
+# This file is named compose.yaml because Docker prefers that over
+# docker-compose.yml, so a bare `docker compose up` gets the dev stack. The
+# production stack is the one that must be asked for explicitly:
+#   docker compose -f docker-compose.yml up
+#
+# Usage (from backend/):
+#   docker compose up --build          # --build belongs to `up`, not to `compose`
+#   docker compose down                # stop; add -v to also drop the database
+#   docker compose logs -f backend
+#
+# First run only — the database starts empty:
+#   docker compose exec backend python manage.py migrate
+#   docker compose exec backend python manage.py seed_rbac
+#   docker compose exec backend python manage.py seed_demo
+#   docker compose exec backend python manage.py seed_sequences
+#
+# Then: http://localhost:8000/  —  visionpharmaplus@gmail.com / Demo!2026#Pharma
+
+name: pharmagros-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pharmagros
+      POSTGRES_USER: pharmagros
+      # Dev-only credential. This stack binds Postgres to localhost and holds
+      # no real data; production takes its password from .env.
+      POSTGRES_PASSWORD: pharmagros
+      # Matches the production collation so French accented names sort the
+      # same way here as they do live.
+      POSTGRES_INITDB_ARGS: "--locale=fr_FR.UTF-8 --encoding=UTF8"
+      LANG: fr_FR.utf8
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pharmagros -d pharmagros"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # Published on localhost only, so a GUI client can inspect the data
+    # without exposing the database beyond this machine. 5455 because another
+    # local project already occupies 5432-5445; the backend does not use this
+    # mapping at all, it reaches the database as db:5432 on the compose network.
+    ports:
+      - "127.0.0.1:5455:5432"
+
+  redis:
+    image: redis:7-alpine
+    # config.settings.dev caches in Redis and throttles the report endpoints
+    # through it, so the reporting exports 500 without this service.
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # dev, not local: local.py hardcodes SQLite and would ignore DATABASE_URL.
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: local-dev-key-not-for-production-000000
+      # 'db' and 'redis' are compose service names on the shared network.
+      DATABASE_URL: postgres://pharmagros:pharmagros@db:5432/pharmagros
+      REDIS_URL: redis://redis:6379/0
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    # The dev server, not gunicorn: this container exists for manual testing
+    # and autoreload is what makes that usable. Bound to 0.0.0.0 because a
+    # process listening on 127.0.0.1 inside a container is unreachable from
+    # the host.
+    command: python manage.py runserver 0.0.0.0:8000
+
+    # Source mounted so edits reload without a rebuild. The anonymous volume
+    # on .venv masks the host virtualenv: it holds Windows binaries and would
+    # otherwise shadow the container's Linux packages — exactly what breaks
+    # WeasyPrint. .dockerignore also keeps it out of the build context.
+    volumes:
+      - .:/app
+      - /app/.venv
+
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata_dev:

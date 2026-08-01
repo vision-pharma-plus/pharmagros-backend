@@ -1,0 +1,316 @@
+{% load i18n l10n %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}">
+<head>
+  <meta charset="utf-8">
+  {# Company name included for the same reason as on the invoice: this becomes the suggested filename, and a bare document number identifies nothing in a downloads folder. #}
+  <title>{{ receipt.receipt_number }} {{ company.NAME }}</title>
+  <style>
+    /* 80 mm roll, the width of every counter printer. The page height is set
+       far taller than any receipt will need and the margin box is left empty:
+       WeasyPrint trims nothing, but a continuous roll simply advances to the
+       cut, so trailing blank space costs nothing while a page break would
+       cost the customer half their receipt. */
+    @page {
+      size: 80mm 297mm;
+      margin: 4mm 4mm 6mm 4mm;
+    }
+
+    body {
+      font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+      font-size: 7.5pt;
+      color: #000;
+      line-height: 1.3;
+      margin: 0;
+    }
+
+    .center { text-align: center; }
+    .right  { text-align: right; }
+    .bold   { font-weight: bold; }
+    .muted  { color: #444; }
+
+    .rule {
+      border-top: 0.6pt dashed #000;
+      margin: 2mm 0;
+    }
+    .rule-solid {
+      border-top: 0.8pt solid #000;
+      margin: 1.5mm 0;
+    }
+
+    /* ========== HEADER ========== */
+    .company-name {
+      font-size: 10pt;
+      font-weight: bold;
+      letter-spacing: 0.2pt;
+    }
+    .company-info {
+      font-size: 6.5pt;
+      line-height: 1.35;
+    }
+    .logo-wrap img {
+      width: 46pt;
+      height: auto;
+      margin-bottom: 1mm;
+    }
+
+    .doc-title {
+      font-size: 9.5pt;
+      font-weight: bold;
+      letter-spacing: 1pt;
+      margin: 1.5mm 0 0.5mm;
+    }
+    .doc-number {
+      font-size: 8.5pt;
+      font-weight: bold;
+    }
+
+    /* ========== META ========== */
+    .meta {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 6.8pt;
+    }
+    .meta td { padding: 0.2mm 0; vertical-align: top; }
+    .meta td.k { color: #444; white-space: nowrap; padding-right: 1.5mm; }
+    .meta td.v { text-align: right; }
+
+    /* ========== LINES ========== */
+    .items { width: 100%; border-collapse: collapse; }
+    .items td { padding: 0.6mm 0; vertical-align: top; }
+
+    .item-desc {
+      font-size: 7.2pt;
+      /* Long medicine names must wrap rather than push the price column off
+         the roll — 80 mm leaves no room for overflow. */
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .item-code { font-size: 6pt; color: #555; }
+    /* Batch and expiry wrap rather than overflow: a line dispensed from
+       several batches can carry more text than 80 mm holds on one row. */
+    .item-batch {
+      font-size: 6pt;
+      color: #333;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    .item-calc { font-size: 6.8pt; color: #333; }
+    .item-total {
+      font-size: 7.5pt;
+      text-align: right;
+      white-space: nowrap;
+      padding-left: 2mm;
+    }
+
+    /* ========== TOTALS ========== */
+    .totals { width: 100%; border-collapse: collapse; font-size: 7.5pt; }
+    .totals td { padding: 0.5mm 0; }
+    .totals td.v { text-align: right; white-space: nowrap; }
+    .totals tr.grand td {
+      font-size: 10pt;
+      font-weight: bold;
+      padding-top: 1mm;
+    }
+
+    .words {
+      font-size: 6.5pt;
+      font-style: italic;
+      margin-top: 1.5mm;
+    }
+
+    /* ========== NOTICES ========== */
+    .notice {
+      font-size: 6.5pt;
+      text-align: center;
+      margin-top: 1mm;
+    }
+    .notice-box {
+      border: 0.6pt solid #000;
+      padding: 1.2mm;
+      margin-top: 2mm;
+      font-size: 6.5pt;
+      text-align: center;
+    }
+    .cancelled {
+      border: 1pt solid #000;
+      padding: 1.5mm;
+      margin: 2mm 0;
+      text-align: center;
+      font-weight: bold;
+      font-size: 9pt;
+      letter-spacing: 1pt;
+    }
+
+    .footer {
+      margin-top: 3mm;
+      font-size: 6.5pt;
+      text-align: center;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+
+  {# ========== HEADER ========== #}
+  <div class="center">
+    {% if company.LOGO %}
+      <div class="logo-wrap"><img src="static/logo.png" alt="{% trans "Company logo" %}" /></div>
+    {% endif %}
+    <div class="company-name">{{ company.NAME }}</div>
+    <div class="company-info">
+      {{ company.ADDRESS }}<br>
+      {% if company.PHONE %}{% trans "TEL:" %} {{ company.PHONE }}<br>{% endif %}
+      {% if company.NIF %}{% trans "NIF:" %} {{ company.NIF }}{% endif %}
+      {% if company.RC %} | {% trans "RC:" %} {{ company.RC }}{% endif %}
+    </div>
+
+    <div class="doc-title">{% trans "SALES RECEIPT" %}</div>
+    <div class="doc-number">{{ receipt.receipt_number }}</div>
+  </div>
+
+  {% if receipt.is_cancelled %}
+    {% comment %}A cancelled receipt can still be reprinted — the customer may be
+    holding the original and needs to see it has been voided.{% endcomment %}
+    <div class="cancelled">{% trans "CANCELLED" %}</div>
+    <div class="notice">{{ receipt.cancellation_reason }}</div>
+  {% endif %}
+
+  <div class="rule"></div>
+
+  {# ========== META ========== #}
+  <table class="meta">
+    <tr>
+      <td class="k">{% trans "Date:" %}</td>
+      <td class="v">{{ receipt.issued_at|date:"d/m/Y H:i" }}</td>
+    </tr>
+    <tr>
+      <td class="k">{% trans "Customer:" %}</td>
+      <td class="v">{{ receipt.customer_name }}</td>
+    </tr>
+    {% if receipt.customer_nif %}
+    <tr>
+      <td class="k">{% trans "NIF:" %}</td>
+      <td class="v">{{ receipt.customer_nif }}</td>
+    </tr>
+    {% endif %}
+    <tr>
+      <td class="k">{% trans "Sale:" %}</td>
+      <td class="v">{{ sale.sale_number }}</td>
+    </tr>
+    {% if cashier %}
+    <tr>
+      <td class="k">{% trans "Served by:" %}</td>
+      <td class="v">{{ cashier }}</td>
+    </tr>
+    {% endif %}
+  </table>
+
+  <div class="rule"></div>
+
+  {# ========== LINES ========== #}
+  <table class="items">
+    {% for line in lines %}
+    <tr>
+      <td>
+        <div class="item-desc">{{ line.description }}</div>
+        <div class="item-code">{{ line.product_code }}</div>
+        {% if line.batches %}
+        <div class="item-batch">
+          {% trans "Batch:" %}
+          {% for batch in line.batches %}
+            {{ batch.batch_number }} ({% trans "Exp." %} {{ batch.expiry }}){% if not forloop.last %};{% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div class="item-calc">
+          {{ line.quantity|floatformat:"-3" }}{% if line.unit_of_measure %} {{ line.unit_of_measure }}{% endif %}
+          &times; {{ line.unit_price_display }}
+          {% if line.discount_percent %}
+            &nbsp;(&minus;{{ line.discount_percent|floatformat:"-2" }}%)
+          {% endif %}
+        </div>
+      </td>
+      <td class="item-total">{{ line.line_total_display }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="rule-solid"></div>
+
+  {# ========== TOTALS ========== #}
+  <table class="totals">
+    <tr>
+      <td>{% trans "Subtotal" %}</td>
+      <td class="v">{{ totals.subtotal }}</td>
+    </tr>
+    {% if sale.discount_amount %}
+    <tr>
+      <td>{% trans "Discount" %}</td>
+      <td class="v">&minus; {{ totals.discount }}</td>
+    </tr>
+    {% endif %}
+    <tr>
+      <td>{% trans "VAT" %}</td>
+      <td class="v">{{ totals.tax }}</td>
+    </tr>
+    <tr class="grand">
+      <td>{% trans "TOTAL" %}</td>
+      <td class="v">{{ totals.total }}</td>
+    </tr>
+  </table>
+
+  <div class="rule"></div>
+
+  {# ========== TENDER ========== #}
+  <table class="totals">
+    <tr>
+      <td>{% trans "Paid by" %}</td>
+      <td class="v">{{ receipt.get_payment_method_display|default:receipt.payment_method }}</td>
+    </tr>
+    {% if receipt.payment_reference %}
+    <tr>
+      <td>{% trans "Reference" %}</td>
+      <td class="v">{{ receipt.payment_reference }}</td>
+    </tr>
+    {% endif %}
+    <tr>
+      <td>{% trans "Tendered" %}</td>
+      <td class="v">{{ totals.tendered }}</td>
+    </tr>
+    {% if receipt.change_given %}
+    <tr>
+      <td class="bold">{% trans "Change" %}</td>
+      <td class="v bold">{{ totals.change }}</td>
+    </tr>
+    {% endif %}
+  </table>
+
+  <div class="words">
+    {% trans "Amount in words:" %} {{ amount_in_words }}
+  </div>
+
+  {% comment %}The statement that settles the question this document exists to
+  answer: the customer owes nothing further.{% endcomment %}
+  <div class="notice bold">{% trans "PAID IN FULL — THANK YOU" %}</div>
+
+  {% if invoice %}
+    {% comment %}An invoice was raised for this same sale. Printing its number
+    here is what lets the two be tied together by hand, and states plainly that
+    it is not a second charge.{% endcomment %}
+    <div class="notice-box">
+      {% blocktrans with number=invoice.invoice_number %}Invoice {{ number }} has been issued for this same sale. It is not an additional amount due.{% endblocktrans %}
+    </div>
+  {% endif %}
+
+  <div class="rule"></div>
+
+  <div class="footer">
+    {% trans "Medicines are not returnable except as provided by law." %}<br>
+    {% trans "Please retain this receipt as proof of purchase." %}
+    <div style="margin-top: 1.5mm;">
+      {{ company.NAME }} &middot; {{ receipt.issued_at|date:"d/m/Y H:i:s" }}
+    </div>
+  </div>
+
+</body>
+</html>

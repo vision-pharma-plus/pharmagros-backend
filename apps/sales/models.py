@@ -29,6 +29,26 @@ class SaleType(models.TextChoices):
     CREDIT = "CREDIT", _("Credit sale")
 
 
+class TenderMethod(models.TextChoices):
+    """
+    How a cash sale was settled at the counter.
+
+    Deliberately a copy of the tender types in `invoicing.PaymentMethod` rather
+    than an import of it: that enum also carries CREDIT_NOTE, which settles an
+    invoice by offset and can never be a counter tender. Importing it would
+    offer an operator a way to "pay" cash for goods with no money changing
+    hands. The overlapping values are identical strings, so the two remain
+    directly comparable in reporting.
+    """
+
+    CASH = "CASH", _("Cash")
+    BANK_TRANSFER = "BANK_TRANSFER", _("Bank transfer")
+    CHEQUE = "CHEQUE", _("Cheque")
+    MOBILE_MONEY = "MOBILE_MONEY", _("Mobile money")
+    CARD = "CARD", _("Bank card")
+    OTHER = "OTHER", _("Other")
+
+
 class SaleStatus(models.TextChoices):
     DRAFT = "DRAFT", _("Draft")
     CONFIRMED = "CONFIRMED", _("Confirmed")
@@ -217,6 +237,122 @@ class SaleLineBatch(models.Model):
 
     def __str__(self) -> str:
         return f"{self.batch_number}: {self.quantity}"
+
+
+class SalesReceipt(BaseModel):
+    """
+    Proof of payment for a cash sale.
+
+    The primary sales document when the customer settles at the counter. A cash
+    sale needs no invoice: the receipt *is* the document handed over, and
+    issuing an invoice as well would double-count the sale in every report that
+    reads invoices.
+
+    It carries no amounts of its own. Every figure is read from the sale it
+    belongs to, which is the single place stock, VAT and revenue were computed.
+    Copying totals here would create a second version of the truth that could
+    drift from the sale after a return, and reconciling the two would be
+    guesswork. `total_amount` and friends are properties for exactly that
+    reason.
+
+    A receipt may later acquire an invoice — because the customer asks for one,
+    or because tax rules require it. That invoice is generated from this same
+    sale and back-references the receipt, so the pair reconciles without any
+    second posting. See `sales.services.invoice_for_receipt`.
+    """
+
+    receipt_number = models.CharField(
+        _("receipt number"), max_length=32, unique=True, db_index=True,
+    )
+    sale = models.OneToOneField(
+        Sale, on_delete=models.PROTECT, related_name="receipt", verbose_name=_("sale"),
+    )
+    customer = models.ForeignKey(
+        "partners.Customer", on_delete=models.PROTECT, related_name="sales_receipts",
+        verbose_name=_("customer"),
+    )
+
+    # --- Customer identity, frozen at issue -------------------------------
+    # Snapshotted for the same reason as on an invoice: the receipt must
+    # reproduce who was served as at the date it was issued, even if the
+    # customer record is later corrected or rebranded.
+    customer_name = models.CharField(_("customer name"), max_length=200)
+    customer_nif = models.CharField(_("customer NIF"), max_length=20, blank=True)
+
+    issued_at = models.DateTimeField(_("issued at"), default=timezone.now, db_index=True)
+    payment_method = models.CharField(
+        _("payment method"), max_length=20,
+        choices=TenderMethod.choices, default=TenderMethod.CASH,
+    )
+    payment_reference = models.CharField(
+        _("payment reference"), max_length=64, blank=True,
+        help_text=_("Mobile money code, card authorisation or transfer reference."),
+    )
+    amount_tendered = MoneyField(_("amount tendered"))
+    change_given = MoneyField(_("change given"))
+
+    issued_by = models.ForeignKey(
+        "accounts.User", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="issued_receipts", verbose_name=_("issued by"),
+    )
+    notes = models.TextField(_("notes"), blank=True)
+
+    # Print history, for the same audit reason as on an invoice: every copy of
+    # a document given to a customer must be accounted for.
+    print_count = models.PositiveIntegerField(_("times printed"), default=0)
+    last_printed_at = models.DateTimeField(_("last printed"), null=True, blank=True)
+
+    cancelled_at = models.DateTimeField(_("cancelled at"), null=True, blank=True)
+    cancellation_reason = models.CharField(_("cancellation reason"), max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = _("sales receipt")
+        verbose_name_plural = _("sales receipts")
+        ordering = ("-issued_at",)
+        indexes = [
+            models.Index(fields=["customer", "-issued_at"], name="idx_receipt_customer_date"),
+            models.Index(fields=["-issued_at"], name="idx_receipt_date"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.receipt_number} — {self.customer_name}"
+
+    # --- Amounts, read from the sale --------------------------------------
+    # Never stored. See the class docstring.
+
+    @property
+    def subtotal(self) -> Decimal:
+        return self.sale.subtotal
+
+    @property
+    def discount_amount(self) -> Decimal:
+        return self.sale.discount_amount
+
+    @property
+    def tax_amount(self) -> Decimal:
+        return self.sale.tax_amount
+
+    @property
+    def total_amount(self) -> Decimal:
+        return self.sale.total_amount
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self.cancelled_at is not None
+
+    @property
+    def invoice(self):
+        """
+        The invoice raised against this receipt, if one ever was.
+
+        Resolved through the sale rather than stored, so there is exactly one
+        link between a sale and its invoice and it cannot disagree with itself.
+        """
+        return getattr(self.sale, "invoice", None)
+
+    @property
+    def has_invoice(self) -> bool:
+        return self.invoice is not None
 
 
 class SaleReturn(BaseModel):

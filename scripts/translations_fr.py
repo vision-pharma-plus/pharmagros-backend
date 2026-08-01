@@ -291,8 +291,14 @@ TRANSLATIONS: dict[str, str] = {
     "dosage form": "forme galénique",
     "pack size": "conditionnement",
     "reference unit cost": "coût unitaire de référence",
-    "selling price": "prix de vente",
-    "wholesale price": "prix de gros",
+    "selling price (VAT incl.)": "prix de vente TTC",
+    "wholesale price (VAT incl.)": "prix de gros TTC",
+    "The price the customer pays, with VAT included.":
+        "Le prix payé par le client, TVA comprise.",
+    "Price applied to institutional customers, if different. "
+    "VAT-inclusive, like the standard selling price.":
+        "Prix appliqué aux clients institutionnels, s'il diffère. "
+        "TTC, comme le prix de vente standard.",
     "VAT rate (%)": "taux de TVA (%)",
     "VAT exempt": "exonéré de TVA",
     "reorder level": "seuil de réapprovisionnement",
@@ -751,6 +757,13 @@ TRANSLATIONS: dict[str, str] = {
     "U.P. EXCL.": "P.U. HT",
     "U.P. INCL.": "P.U. TTC",
     "TAX": "TAX",
+    # Items-grid headers on the printed invoice. The French side is the
+    # abbreviated form used on Burundian fiscal invoices; the English msgid
+    # spells the same column out, since an anglophone reader has no
+    # convention to fall back on. "UNIT" is the unit of measure (boîte,
+    # flacon); French heads that column "PER." on the pre-printed layout.
+    "UNIT": "PER.",
+    "TOTAL INCL.": "P.T. TTC",
     "REF": "RÉF",
     "CASH": "COMPTANT",
     "CREDIT — %(days)s days": "CRÉDIT — %(days)s jours",
@@ -758,11 +771,16 @@ TRANSLATIONS: dict[str, str] = {
     "Liable for VAT": "Assujetti à la TVA",
     "YES": "OUI",
     "NO": "NON",
+    # Totals summary under the items grid. The letters are the OBR tax
+    # classes (A exempt, B standard 18%, C zero-rated) and are not
+    # translated — they are the revenue authority's own codes and must match
+    # the declaration filed against the invoice.
     "TOTAL A-EX": "TOTAL A-EX",
     "TOTAL B 18%": "TOTAL B 18%",
     "TOTAL C 0%": "TOTAL C 0%",
     "TOTAL TAX B": "TOTAL TAXE B",
     "TOTAL TAX": "TOTAL TAXE",
+    "GRAND TOTAL": "TOTAL GÉNÉRAL",
     "BANK DETAILS": "COORDONNÉES BANCAIRES",
     "SDC INFORMATION": "INFORMATIONS SDC",
     "TIME SDC": "HEURE SDC",
@@ -801,6 +819,91 @@ TRANSLATIONS: dict[str, str] = {
     "Destinateur": "Destinateur",
     "Expediteur": "Expediteur",
     "Time": "Heure",
+
+    # Labels carrying their own colon. French sets a narrow no-break space
+    # before ':', which cannot be produced by appending the colon in the
+    # template, so the punctuation is part of the string on both sides.
+    "TEL:": "TEL :",
+    "NIF:": "NIF :",
+    "RC:": "RC :",
+    "Tax centre:": "Centre fiscal :",
+    "Legal form:": "Forme juridique :",
+    "Sector:": "Secteur :",
+    "Receipt number:": "Numéro de reçu :",
+    "Prescriber:": "Médecin :",
+    "Amount in words:": "Arrêté à la somme de :",
+    "Date:": "Date :",
+    "Customer:": "Client :",
+    # Issuing place and reference lines: the city and the "REF : CASH" wording
+    # are part of the sentence, so they sit inside the msgid rather than being
+    # concatenated around the placeholder.
+    # blocktrans msgids use gettext placeholders: Django rewrites `{{ var }}`
+    # to %(var)s before looking the string up, so the key must match that form.
+    "Buja, On %(issue_date)s": "Buja, le %(issue_date)s",
+    "REF : CASH : %(total)s": "RÉF : COMPTANT : %(total)s",
+    "SERVED BY %(cashier_name)s": "SERVI PAR %(cashier_name)s",
+    "No bank account on file.": "Aucun compte bancaire enregistré.",
+    "Company logo": "Logo de la société",
+    "of": "sur",
+
+    # Section headings and block titles on the printed invoice.
+    "Items": "Articles",
+    "Summary": "Récapitulatif",
+    "Customer Information": "Informations client",
+    "Bank Details": "Coordonnées bancaires",
+    "SDC Information": "Informations SDC",
+    "Customer Stamp": "Cachet du client",
+    "SOCIETE": "SOCIÉTÉ",
+    "SOUMISE A LA TVA NON": "ASSUJETTI À LA TVA : NON",
+    # Items-grid headers. These msgids are already the abbreviated French
+    # forms used on the pre-printed stationery, so several translations are
+    # deliberately identical to the source.
+    "LOT": "LOT",
+    "PER.": "PER.",
+    "P.U. HT": "P.U. HT",
+    "P.U. TTC": "P.U. TTC",
+    "P.T. TTC": "P.T. TTC",
+    # Totals band. "BIF" is the ISO currency code and the A/B/C letters are the
+    # OBR tax classes — both stay verbatim in every locale.
+    "TOTAL A-EX BIF": "TOTAL A-EX BIF",
+    "TOTAL B 18% BIF": "TOTAL B 18% BIF",
+    "TOTAL C 0% BIF": "TOTAL C 0% BIF",
+    "TOTAL TAX B BIF": "TOTAL TAXE B BIF",
+    "TOTAL TAX BIF": "TOTAL TAXE BIF",
+    "TOTAL BIF": "TOTAL BIF",
+    # Signature row. The msgids are English so an anglophone reader sees
+    # English; the printed French document keeps the wording already used on
+    # the pre-printed stationery.
+    "Carrier": "Transporteur",
+    "Recipient": "Destinataire",
+    "Sender": "Expéditeur",
+
+    # -- Sales receipt PDF ---------------------------------------------------
+    # The 80 mm counter receipt. It prints in French by default, so every
+    # string on it needs an entry here — an untranslated label on the document
+    # handed across the counter is the one a customer is most likely to read.
+    # Wording is kept short because the roll is 80 mm wide: "Servi par" rather
+    # than "Servi par le caissier", "Reçu" rather than "Montant reçu".
+    "SALES RECEIPT": "REÇU DE VENTE",
+    "Sale:": "Vente :",
+    "Served by:": "Servi par :",
+    # Batch traceability under each line. The receipt reuses the existing
+    # "Exp." → "Pér." abbreviation defined among the generic labels above,
+    # which is also the invoice's column heading; only the "Batch:" label
+    # carrying its own colon is new here.
+    "Batch:": "Lot :",
+    "Paid by": "Payé par",
+    "Tendered": "Reçu",
+    "Change": "Monnaie",
+    # Em dash kept, matching the source string's punctuation.
+    "PAID IN FULL — THANK YOU": "PAYÉ INTÉGRALEMENT — MERCI",
+    "Medicines are not returnable except as provided by law.":
+        "Les médicaments ne sont pas repris sauf dans les cas prévus par la loi.",
+    "Please retain this receipt as proof of purchase.":
+        "Veuillez conserver ce reçu comme preuve d'achat.",
+    "Invoice %(number)s has been issued for this same sale. It is not an additional amount due.":
+        "La facture %(number)s a été émise pour cette même vente. "
+        "Il ne s'agit pas d'un montant supplémentaire à payer.",
 
     # -- Purchasing ----------------------------------------------------------
     "purchase order line": "ligne de bon de commande",
@@ -959,6 +1062,8 @@ TRANSLATIONS: dict[str, str] = {
     "Item": "Poste",
     "Amount": "Montant",
     # -- PDF report header ----------------------------------------------------
+    "Company Details": "Coordonnées de l'entreprise",
+    "Details": "Détails",
     "Generated": "Généré le",
     "Lines": "Lignes",
     "From": "Du",

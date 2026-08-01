@@ -24,11 +24,18 @@ django-celery-beat==2.7.0
 django-redis==5.4.0
 
 # ---- Documents / reporting ------------------------------------------------
-# Pure-Python HTML -> PDF. Chosen over WeasyPrint because it needs no native
-# Pango/Cairo libraries, so PDFs render identically on a Windows dev box and
-# on the server without any system packages.
-xhtml2pdf==0.2.16
+# HTML -> PDF. WeasyPrint supports real CSS (Paged Media, flexbox, @page
+# margin boxes), so the invoice and report templates are ordinary stylesheets
+# rather than nested tables with hard-coded point widths.
+#
+# It links against native Pango/Cairo libraries. The Dockerfile installs them;
+# on a Windows dev box they come from the GTK runtime, which must be installed
+# separately or PDF rendering fails with an OSError at import time.
+weasyprint==63.1
 openpyxl==3.1.5                    # Excel export
+
+# ---- External services ----------------------------------------------------
+requests==2.32.3                   # OBR EBMS declaration transport
 
 # ---- Ops ------------------------------------------------------------------
 gunicorn==23.0.0

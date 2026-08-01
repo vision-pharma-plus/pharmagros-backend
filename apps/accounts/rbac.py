@@ -48,6 +48,11 @@ PERMISSIONS: list[tuple[str, str, str, str, bool]] = [
     ("sales.override_credit_limit", "Déroger à la limite de crédit", "Override credit limit", M.SALES, True),
     ("sales.process_return", "Traiter un retour", "Process return", M.SALES, True),
     ("sales.view_margin", "Consulter les marges", "View margins", M.SALES, True),
+    ("sales.print_receipt", "Imprimer un reçu de vente", "Print sales receipt", M.SALES, False),
+    # Raising an invoice for an already-receipted cash sale. Sensitive because
+    # it puts a second document for one transaction into the customer's hands,
+    # and a fiscal one at that.
+    ("sales.invoice_receipt", "Facturer un reçu de vente", "Invoice a sales receipt", M.SALES, True),
 
     # -- Invoicing ----------------------------------------------------------
     ("invoicing.view_invoice", "Consulter les factures", "View invoices", M.INVOICING, False),
@@ -59,6 +64,7 @@ PERMISSIONS: list[tuple[str, str, str, str, bool]] = [
     ("invoicing.record_payment", "Enregistrer un paiement", "Record payment", M.INVOICING, True),
     ("invoicing.issue_credit_note", "Émettre une note de crédit", "Issue credit note", M.INVOICING, True),
     ("invoicing.issue_debit_note", "Émettre une note de débit", "Issue debit note", M.INVOICING, True),
+    ("invoicing.declare_invoice", "Déclarer une facture à l'OBR", "Declare invoice to OBR", M.INVOICING, True),
 
     # -- Purchasing ---------------------------------------------------------
     ("purchasing.view_order", "Consulter les commandes", "View purchase orders", M.PURCHASING, False),
@@ -157,6 +163,9 @@ ROLES: list[dict] = [
             "inventory.issue_stock",
             "sales.view_sale",
             "sales.add_sale",
+            # A technician takes counter sales, so they must be able to hand
+            # the customer the receipt that closes one.
+            "sales.print_receipt",
             "invoicing.view_invoice",
             "invoicing.add_invoice",
             "invoicing.print_invoice",
@@ -185,6 +194,8 @@ ROLES: list[dict] = [
             "sales.apply_discount",
             "sales.process_return",
             "sales.cancel_sale",
+            "sales.print_receipt",
+            "sales.invoice_receipt",
             "invoicing.post_invoice",
             "invoicing.email_invoice",
             "invoicing.record_payment",
@@ -244,6 +255,9 @@ ROLES: list[dict] = [
             "partners.change_supplier",
             "sales.view_sale",
             "sales.view_margin",
+            # Re-declaring a document the OBR refused is a fiscal correction,
+            # so it sits with financial oversight rather than the counter.
+            "invoicing.declare_invoice",
             "reporting.view_sales_reports",
             "reporting.view_financial_reports",
             "reporting.export_data",

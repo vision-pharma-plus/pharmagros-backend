@@ -169,6 +169,60 @@ refused, so forgetting a declaration fails closed.
 administrator's customised role during a routine deploy would be a nasty
 surprise.
 
+### 3.9 OBR declaration: local identity, deferred transmission
+
+Burundi requires sales documents to be declared electronically to the OBR
+(EBMS). `apps/invoicing/fiscal/` implements this in four parts — `signature`,
+`payload`, `client`, `service` — behind an `OBR_ENABLED` flag that is off by
+default, because declaration is impossible until the OBR certifies the
+installation and issues its `SYSTEM_ID`.
+
+**Identity is computed locally; transmission is deferred.** These are the two
+decisions everything else follows from.
+
+The fiscal signature — `{NIF}/{system_id}/{date}/{number}` — is derived at
+posting time from data already frozen on the document. No network call is
+involved, so a counter sale in Bujumbura completes whether or not the link is
+up, and the document is nonetheless fully identified the instant it is issued.
+`test_posting_makes_no_network_call` enforces this by making any use of
+`requests` during posting a test failure.
+
+Declaration itself is drained by a Celery beat sweep every ten minutes.
+Posting sets `fiscal_status = PENDING` and returns. A backlog accumulated
+during an outage drains steadily when the link returns.
+
+**Fiscal status is deliberately not invoice status.** Commercial state (is it
+paid?) and fiscal state (is it declared?) move independently — an invoice can
+be settled in full while its declaration is still queued. One field could not
+answer both questions.
+
+**Retries back off and then stop.** Geometric backoff from 5 minutes, capped
+at 6 hours, abandoned after `OBR_MAX_ATTEMPTS`. A document the OBR refuses on
+its merits (4xx) is not retried at all: it moves straight to `REJECTED`.
+Retrying a permanently-invalid document forever would bury genuine failures in
+noise, so exhaustion raises a CRITICAL notification instead. Recovery is a
+`POST …/declare` once the cause is fixed, which resets the counter.
+
+**`declare_invoice` is deliberately not one atomic block.** The network call
+sits in the middle, and the record of a failed attempt — incremented counter,
+error text, `FiscalRequestLog` row — must outlive the exception that reports
+it. A single enclosing transaction would roll that evidence back on the way
+out. Instead the two read-modify-write critical sections take
+`select_for_update()` separately, which still prevents two concurrent sweeps
+from declaring the same document twice.
+
+**`FiscalRequestLog` records every exchange verbatim**, written *before* the
+request goes out so a call that never returns still leaves a trace. When our
+records and the OBR's disagree about what was filed, this table is the
+evidence; deriving it from final state alone would lose exactly the failed
+attempts an inspection asks about.
+
+**Token handling.** Bearer tokens are cached until shortly before the `exp`
+claim, decoded without signature verification — safe only because the sole
+value read is the expiry, used to schedule renewal. The OBR remains the
+authority on validity; a 401 mid-sweep evicts the cached token rather than
+replaying it.
+
 ---
 
 ## 4. Security architecture

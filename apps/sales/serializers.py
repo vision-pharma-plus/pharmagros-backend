@@ -4,7 +4,16 @@ from rest_framework import serializers
 
 from apps.core.fields import MoneySerializerField
 
-from .models import Sale, SaleLine, SaleLineBatch, SaleReturn, SaleReturnLine, SaleType
+from .models import (
+    Sale,
+    SaleLine,
+    SaleLineBatch,
+    SaleReturn,
+    SaleReturnLine,
+    SalesReceipt,
+    SaleType,
+    TenderMethod,
+)
 
 
 class SaleLineBatchSerializer(serializers.ModelSerializer):
@@ -142,10 +151,104 @@ class ConfirmSaleSerializer(serializers.Serializer):
     an override is a deliberate assumption of risk and must be attributable.
     """
 
-    generate_invoice = serializers.BooleanField(default=True)
+    # Null (the default) means "follow the sale type": a cash sale is
+    # receipted, a credit sale is invoiced. Sending an explicit true forces an
+    # invoice for a cash sale as well, for customers or tax rules that require
+    # one — the sale is still receipted and the two documents are linked.
+    generate_invoice = serializers.BooleanField(
+        required=False, allow_null=True, default=None,
+    )
     credit_override_reason = serializers.CharField(
         max_length=255, required=False, allow_blank=True,
     )
+
+    # --- Cash tender, ignored on a credit sale ---------------------------
+    payment_method = serializers.ChoiceField(
+        choices=TenderMethod.choices, default=TenderMethod.CASH,
+    )
+    payment_reference = serializers.CharField(
+        max_length=64, required=False, allow_blank=True,
+    )
+    amount_tendered = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
+    )
+
+
+class SalesReceiptSerializer(serializers.ModelSerializer):
+    """
+    A cash sale receipt.
+
+    Amounts are read from the sale — the receipt stores none of its own, so
+    that a return or correction can never leave the two disagreeing.
+    """
+
+    sale_number = serializers.CharField(source="sale.sale_number", read_only=True)
+    sale_status = serializers.CharField(source="sale.status", read_only=True)
+    lines = SaleLineSerializer(source="sale.lines", many=True, read_only=True)
+
+    subtotal = MoneySerializerField(read_only=True)
+    discount_amount = MoneySerializerField(read_only=True)
+    tax_amount = MoneySerializerField(read_only=True)
+    total_amount = MoneySerializerField(read_only=True)
+    amount_tendered = MoneySerializerField(read_only=True)
+    change_given = MoneySerializerField(read_only=True)
+
+    is_cancelled = serializers.BooleanField(read_only=True)
+    has_invoice = serializers.BooleanField(read_only=True)
+    # Exposed so the UI can link straight to an invoice already raised
+    # against this receipt instead of offering to raise a second one.
+    invoice_id = serializers.CharField(source="invoice.id", read_only=True, default=None)
+    invoice_number = serializers.CharField(
+        source="invoice.invoice_number", read_only=True, default=None,
+    )
+
+    class Meta:
+        model = SalesReceipt
+        fields = [
+            "id", "receipt_number", "sale", "sale_number", "sale_status",
+            "customer", "customer_name", "customer_nif",
+            "issued_at", "payment_method", "payment_reference",
+            "subtotal", "discount_amount", "tax_amount", "total_amount",
+            "amount_tendered", "change_given",
+            "issued_by", "notes", "print_count", "last_printed_at",
+            "is_cancelled", "cancelled_at", "cancellation_reason",
+            "has_invoice", "invoice_id", "invoice_number",
+            "lines", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class SalesReceiptListSerializer(serializers.ModelSerializer):
+    """List rows. Omits the lines, which the table does not render."""
+
+    sale_number = serializers.CharField(source="sale.sale_number", read_only=True)
+    total_amount = MoneySerializerField(read_only=True)
+    is_cancelled = serializers.BooleanField(read_only=True)
+    has_invoice = serializers.BooleanField(read_only=True)
+    invoice_number = serializers.CharField(
+        source="invoice.invoice_number", read_only=True, default=None,
+    )
+
+    class Meta:
+        model = SalesReceipt
+        fields = [
+            "id", "receipt_number", "sale", "sale_number",
+            "customer", "customer_name", "issued_at", "payment_method",
+            "total_amount", "is_cancelled", "has_invoice", "invoice_number",
+        ]
+        read_only_fields = fields
+
+
+class InvoiceForReceiptSerializer(serializers.Serializer):
+    """
+    Payload for raising an invoice against an existing cash sale receipt.
+
+    The reason is optional but recorded on the invoice and in the audit log:
+    it is the answer to "why does this settled sale have two documents?", and
+    that question is asked during a tax inspection.
+    """
+
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
 
 class CancelSerializer(serializers.Serializer):

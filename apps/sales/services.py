@@ -2,11 +2,22 @@
 Sales orchestration.
 
 `confirm_sale` is the most consequential function in the system: it checks
-credit, issues stock via FIFO, records batch traceability, generates the
-invoice and updates the customer balance â€” all in one transaction. Either the
+credit, issues stock via FIFO, records batch traceability, raises the closing
+document and updates the customer balance â€” all in one transaction. Either the
 whole commercial event happens or none of it does. A partial commit here would
-mean stock left the warehouse without an invoice, or an invoice existed for
-goods never issued.
+mean stock left the warehouse undocumented, or a document existed for goods
+never issued.
+
+Which document closes the sale depends on how it is paid:
+
+    Cash sale    -> SalesReceipt   (proof of payment; the sale is settled)
+    Credit sale  -> Invoice        (open receivable; settled later by payment)
+
+Never both by default. A cash sale that also needs an invoice — because the
+customer or a tax rule demands one — gets it from `invoice_for_receipt`, which
+issues a second *document* for the same transaction without a second posting
+of stock, tax or revenue. Everything ledger-affecting happens once, in
+`confirm_sale`, and nowhere else.
 """
 
 from __future__ import annotations
@@ -23,7 +34,7 @@ from apps.core.exceptions import (
     InvalidStateTransition,
 )
 from apps.core.models import AuditAction
-from apps.core.money import compute_line, q_internal, sum_money
+from apps.core.money import compute_line, price_ex_tax, q_internal, sum_money
 from apps.core.numbering import next_number
 from apps.inventory.models import MovementType
 from apps.inventory.services import (
@@ -38,11 +49,51 @@ from .models import (
     SaleLineBatch,
     SaleReturn,
     SaleReturnLine,
+    SalesReceipt,
     SaleStatus,
     SaleType,
+    TenderMethod,
 )
 
 ZERO = Decimal("0")
+
+
+def _invoice_lines_for(sale: Sale, lines=None) -> list[dict]:
+    """
+    Build invoice line payloads from a sale's own lines.
+
+    Shared by the credit path (which invoices at confirmation) and the
+    receipt-to-invoice path (which invoices later). Both must produce
+    byte-identical lines: an invoice raised for a cash sale a week afterwards
+    has to show the same prices, batches and VAT as the receipt the customer
+    already holds. Building them in one place is what guarantees that.
+
+    Amounts are taken from the sale line as stored, never recomputed from the
+    catalogue — the price may have changed since.
+    """
+    lines = lines if lines is not None else sale.lines.select_related("product")
+
+    payload = []
+    for line in lines:
+        allocations = line.batch_allocations.all()
+        payload.append(
+            {
+                "product": line.product,
+                "product_code": line.product.product_code,
+                "description": line.product.display_name,
+                "batch_numbers": ", ".join(a.batch_number for a in allocations),
+                "expiry_dates": ", ".join(
+                    a.expiry_date.strftime("%m/%Y") for a in allocations
+                ),
+                "quantity": line.quantity,
+                "unit_of_measure": line.product.unit_of_measure.code,
+                "unit_price": line.unit_price,
+                "discount_percent": line.discount_percent,
+                "tax_rate": line.tax_rate,
+                "unit_cost": line.unit_cost,
+            }
+        )
+    return payload
 
 
 @transaction.atomic
@@ -128,9 +179,20 @@ def _build_line(sale: Sale, line_number: int, data: dict, customer) -> SaleLine:
             _("Line quantities must be greater than zero."), code="invalid_quantity"
         )
 
-    # Price resolution order: explicit override â†’ customer-tier price.
+    tax_rate = q_internal(product.effective_vat_rate)
+
+    # Price resolution order: explicit override -> customer-tier price.
+    #
+    # Both arrive TTC and are stored HT. The override is quoted at the counter
+    # in the same terms the operator sees on screen and on the shelf edge — a
+    # tax-inclusive figure — so it is extracted exactly like a catalogue price.
+    # Treating it as already-HT would apply VAT a second time at compute_line
+    # and undercharge the customer on every manually priced line.
     unit_price = data.get("unit_price")
-    unit_price = q_internal(unit_price) if unit_price is not None else product.price_for(customer)
+    if unit_price is not None:
+        unit_price = price_ex_tax(unit_price, tax_rate)
+    else:
+        unit_price = product.price_for(customer)
 
     # Line discount falls back to the customer's standing discount.
     discount_percent = data.get("discount_percent")
@@ -138,7 +200,6 @@ def _build_line(sale: Sale, line_number: int, data: dict, customer) -> SaleLine:
         discount_percent = customer.discount_percent
     discount_percent = q_internal(discount_percent)
 
-    tax_rate = q_internal(product.effective_vat_rate)
     amounts = compute_line(quantity, unit_price, discount_percent, tax_rate)
 
     return SaleLine.objects.create(
@@ -177,15 +238,40 @@ def confirm_sale(
     actor=None,
     credit_override_reason: str = "",
     credit_override_by=None,
-    generate_invoice: bool = True,
+    generate_invoice: bool | None = None,
+    payment_method: str = TenderMethod.CASH,
+    payment_reference: str = "",
+    amount_tendered: Decimal | None = None,
 ):
     """
-    Confirm a sale: check credit, issue stock, record traceability, invoice.
+    Confirm a sale: check credit, issue stock, record traceability, document it.
+
+    The closing document depends on how the customer is paying, because the two
+    cases are different commercial events:
+
+    * **Cash sale** — settled at the counter. A `SalesReceipt` is issued and it
+      is the only document; the money is already in, so there is nothing to
+      invoice. Raising an invoice as well would double the sale in every
+      report that reads invoices, and leave a fully-paid receivable sitting
+      open against a customer who owes nothing.
+    * **Credit sale** — payment comes later. A `SalesInvoice` is posted and
+      stays open until settled, at which point `record_payment` produces the
+      payment receipt that discharges it.
+
+    Either way stock, VAT, revenue and cost are posted exactly once, here. The
+    document is a *record* of that posting, not a second one — which is what
+    lets a cash sale later acquire an invoice (`invoice_for_receipt`) without
+    anything being counted twice.
+
+    `generate_invoice` overrides the choice for callers with a standing reason
+    to — a tax rule that demands an invoice on every sale, or a caller
+    deferring the document. Left as None it follows the sale type, which is
+    what every ordinary checkout wants.
 
     Ordering is deliberate. Credit is checked *before* stock moves, so a
     refused sale never leaves the warehouse short. Stock is issued before the
-    invoice is posted, so an invoice can never exist for goods that could not
-    be supplied.
+    document is raised, so no document can exist for goods that could not be
+    supplied.
     """
     if sale.status != SaleStatus.DRAFT:
         raise InvalidStateTransition(
@@ -271,42 +357,47 @@ def confirm_sale(
     sale.updated_by = actor
     sale.save()
 
-    # --- 3. Invoice -----------------------------------------------------
-    invoice = None
-    if generate_invoice:
-        from apps.invoicing.services import create_invoice, post_invoice
+    # --- 3. Closing document --------------------------------------------
+    # A cash sale is receipted; a credit sale is invoiced. Never both — see
+    # the docstring. An explicit `generate_invoice` overrides the default.
+    is_credit = sale.sale_type == SaleType.CREDIT
+    wants_invoice = is_credit if generate_invoice is None else generate_invoice
 
-        invoice_lines = []
-        for line in lines:
-            allocations = line.batch_allocations.all()
-            invoice_lines.append(
-                {
-                    "product": line.product,
-                    "product_code": line.product.product_code,
-                    "description": line.product.display_name,
-                    "batch_numbers": ", ".join(a.batch_number for a in allocations),
-                    "expiry_dates": ", ".join(
-                        a.expiry_date.strftime("%m/%Y") for a in allocations
-                    ),
-                    "quantity": line.quantity,
-                    "unit_of_measure": line.product.unit_of_measure.code,
-                    "unit_price": line.unit_price,
-                    "discount_percent": line.discount_percent,
-                    "tax_rate": line.tax_rate,
-                    "unit_cost": line.unit_cost,
-                }
-            )
+    invoice = None
+    receipt = None
+
+    if wants_invoice:
+        from apps.invoicing.services import create_invoice, post_invoice
 
         invoice = create_invoice(
             customer=customer,
-            lines=invoice_lines,
-            is_credit_sale=(sale.sale_type == SaleType.CREDIT),
+            lines=_invoice_lines_for(sale, lines),
+            is_credit_sale=is_credit,
             sale=sale,
             invoice_date=sale.sale_date,
             reference=sale.customer_order_reference,
             actor=actor,
         )
         post_invoice(invoice, actor=actor)
+
+    # A cash sale is receipted even when an invoice was also demanded: the
+    # money was taken at the counter and the receipt is what proves it. The
+    # invoice above is then the fiscal record of that same settled sale, and
+    # is linked to the receipt rather than standing as a separate one.
+    if not is_credit:
+        receipt = _issue_receipt(
+            sale,
+            payment_method=payment_method,
+            payment_reference=payment_reference,
+            amount_tendered=amount_tendered,
+            actor=actor,
+        )
+        if invoice is not None:
+            invoice.source_receipt = receipt
+            # Posted invoices are immutable, but this link is part of
+            # establishing the document's identity at issue rather than a
+            # later edit of its contents — no amount, party or line changes.
+            invoice.save(update_fields=["source_receipt", "updated_at"])
 
     # --- 4. Customer activity + exposure --------------------------------
     if customer.first_sale_at is None:
@@ -326,8 +417,10 @@ def confirm_sale(
         entity_label=sale.sale_number,
         new_value={
             "status": sale.status,
+            "sale_type": sale.sale_type,
             "total_amount": str(sale.total_amount),
             "total_cost": str(sale.total_cost),
+            "receipt": receipt.receipt_number if receipt else None,
             "invoice": invoice.invoice_number if invoice else None,
             "credit_override": bool(sale.credit_override_reason),
         },
@@ -342,7 +435,200 @@ def confirm_sale(
         ),
         actor=actor,
     )
-    return sale, invoice
+    return sale, invoice, receipt
+
+
+def _issue_receipt(
+    sale: Sale,
+    *,
+    payment_method: str = TenderMethod.CASH,
+    payment_reference: str = "",
+    amount_tendered: Decimal | None = None,
+    actor=None,
+) -> SalesReceipt:
+    """
+    Issue the receipt for a settled cash sale.
+
+    Called from inside `confirm_sale`'s transaction, after stock has moved and
+    the sale totals are final. It posts nothing itself — the receipt is the
+    record of a payment already taken, so there is no ledger effect left to
+    apply here.
+
+    `amount_tendered` is what the customer handed over, used to print the
+    change due. It defaults to the exact total, which is the case for every
+    non-cash tender (a card is charged the precise amount) and for a counter
+    that does not track cash drawers.
+    """
+    total = sale.total_amount
+    tendered = q_internal(amount_tendered) if amount_tendered is not None else total
+
+    if tendered < total:
+        raise BusinessRuleViolation(
+            _("The amount tendered (%(tendered)s) is less than the total due (%(total)s).")
+            % {"tendered": tendered, "total": total},
+            code="insufficient_tender",
+            details={"tendered": str(tendered), "total_due": str(total)},
+        )
+
+    receipt = SalesReceipt.objects.create(
+        receipt_number=next_number("sales.sales_receipt", when=sale.sale_date),
+        sale=sale,
+        customer=sale.customer,
+        # Frozen identity — see the model docstring.
+        customer_name=sale.customer.business_name,
+        customer_nif=sale.customer.nif,
+        issued_at=sale.sale_date,
+        payment_method=payment_method,
+        payment_reference=payment_reference,
+        amount_tendered=tendered,
+        change_given=q_internal(tendered - total),
+        issued_by=actor,
+        created_by=actor,
+    )
+
+    record(
+        AuditAction.POST,
+        SalesReceipt._meta.label,
+        entity_id=str(receipt.pk),
+        entity_label=receipt.receipt_number,
+        new_value={
+            "sale": sale.sale_number,
+            "customer": sale.customer.customer_code,
+            "total_amount": str(total),
+            "payment_method": payment_method,
+        },
+        notes=f"Cash sale receipted: {receipt.receipt_number}",
+        actor=actor,
+    )
+    return receipt
+
+
+@transaction.atomic
+def invoice_for_receipt(receipt: SalesReceipt, *, reason: str = "", actor=None):
+    """
+    Raise an invoice for a sale that was already receipted at the counter.
+
+    Covers both business cases, because they are the same operation: a customer
+    or tax rule requiring an invoice for a cash sale, and a receipt being
+    "converted" to an invoice after the fact. Nothing is converted in the
+    literal sense — the receipt remains valid and remains the proof of payment.
+    What happens is that a second *document* is issued describing the same
+    transaction, linked back to the receipt.
+
+    The invariants this exists to protect:
+
+    * **No second sale.** The invoice is built from the original sale's lines,
+      so there is exactly one commercial transaction throughout.
+    * **No second inventory movement.** Stock was issued at confirmation. This
+      function never touches `post_batch_movement`; the batch numbers it prints
+      are read from the allocations already recorded.
+    * **No second VAT or revenue posting.** Line amounts are copied from the
+      sale as stored, not recomputed, and the invoice is created already
+      settled — it never becomes an open receivable, so it cannot be counted
+      as new income owed.
+    * **Traceable.** The invoice carries `source_receipt`, and both documents
+      point at the same sale.
+
+    The invoice is posted and immediately marked PAID against the money the
+    receipt already took. It is a fiscal record of a settled sale, not a
+    request for payment, and leaving it open would misstate both the
+    customer's balance and the receivables ledger.
+    """
+    if receipt.is_cancelled:
+        raise BusinessRuleViolation(
+            _("Receipt %(number)s has been cancelled and cannot be invoiced.")
+            % {"number": receipt.receipt_number},
+            code="receipt_cancelled",
+        )
+
+    sale = receipt.sale
+
+    if sale.status == SaleStatus.CANCELLED:
+        raise BusinessRuleViolation(
+            _("Sale %(number)s has been cancelled and cannot be invoiced.")
+            % {"number": sale.sale_number},
+            code="sale_cancelled",
+        )
+
+    # The OneToOne on Invoice.sale makes a duplicate a database error; catching
+    # it here turns that into an answer the operator can act on, and returns
+    # the document they were asking for rather than failing.
+    existing = getattr(sale, "invoice", None)
+    if existing is not None:
+        from apps.invoicing.models import InvoiceStatus
+
+        if existing.status != InvoiceStatus.CANCELLED:
+            raise BusinessRuleViolation(
+                _("Sale %(sale)s has already been invoiced as %(invoice)s.")
+                % {"sale": sale.sale_number, "invoice": existing.invoice_number},
+                code="already_invoiced",
+                details={
+                    "invoice_id": str(existing.pk),
+                    "invoice_number": existing.invoice_number,
+                },
+            )
+        # A cancelled invoice leaves the sale invoiceable again, but the
+        # OneToOne still holds the old row. Release it so the replacement can
+        # take the link; the cancelled document is retained, as fiscal rules
+        # require, and remains findable through its own number.
+        existing.sale = None
+        existing.source_receipt = None
+        existing.save(update_fields=["sale", "source_receipt", "updated_at"])
+
+    from apps.invoicing.models import InvoiceStatus
+    from apps.invoicing.services import create_invoice, post_invoice
+
+    invoice = create_invoice(
+        customer=sale.customer,
+        lines=_invoice_lines_for(sale),
+        # False: the money is already in. Marking it a credit sale would give
+        # it a due date and add it to the customer's outstanding balance —
+        # inventing a debt that was settled before this document existed.
+        is_credit_sale=False,
+        sale=sale,
+        # The invoice date is the date of the sale it records, not today. A
+        # fiscal document must fall in the period the transaction occurred in,
+        # otherwise the VAT lands in the wrong return.
+        invoice_date=sale.sale_date,
+        reference=receipt.receipt_number,
+        notes=reason,
+        actor=actor,
+    )
+    invoice.source_receipt = receipt
+    invoice.save(update_fields=["source_receipt", "updated_at"])
+
+    post_invoice(invoice, actor=actor)
+
+    # Settle it against the money the receipt already took. No Payment row is
+    # created: no new money arrived, and inventing one would overstate takings
+    # for the day by the value of this sale.
+    invoice.paid_amount = invoice.total_amount
+    invoice.balance_due = ZERO
+    invoice.status = InvoiceStatus.PAID
+    invoice.save(
+        update_fields=["paid_amount", "balance_due", "status", "updated_at"]
+    )
+
+    record(
+        AuditAction.CREATE,
+        SalesReceipt._meta.label,
+        entity_id=str(receipt.pk),
+        entity_label=receipt.receipt_number,
+        new_value={
+            "invoice": invoice.invoice_number,
+            "sale": sale.sale_number,
+            "total_amount": str(invoice.total_amount),
+            "settled_by_receipt": True,
+        },
+        notes=(
+            f"Invoice {invoice.invoice_number} issued against receipt "
+            f"{receipt.receipt_number} for the same sale; no stock, tax or "
+            f"revenue re-posted."
+            + (f" Reason: {reason}" if reason else "")
+        ),
+        actor=actor,
+    )
+    return invoice
 
 
 @transaction.atomic
@@ -393,7 +679,45 @@ def cancel_sale(sale: Sale, *, reason: str, actor=None) -> Sale:
             from apps.invoicing.services import cancel_invoice
 
             if invoice.status != InvoiceStatus.CANCELLED:
+                # An invoice raised against a receipt was settled from the
+                # receipt's money rather than a Payment, so `cancel_invoice`
+                # would refuse it as "already paid". Release that settlement
+                # first: the money it represents is refunded through the
+                # receipt being cancelled just below, not held against a
+                # document that no longer exists.
+                if invoice.source_receipt_id is not None and invoice.paid_amount > ZERO:
+                    invoice.paid_amount = ZERO
+                    invoice.balance_due = invoice.total_amount
+                    invoice.status = InvoiceStatus.POSTED
+                    invoice.save(
+                        update_fields=[
+                            "paid_amount", "balance_due", "status", "updated_at",
+                        ]
+                    )
                 cancel_invoice(invoice, reason=f"Sale cancelled: {reason}", actor=actor)
+
+        # The receipt is retained and stamped rather than deleted: it was
+        # handed to a customer, and a document that existed must stay
+        # findable — the same rule that keeps cancelled invoices on file.
+        receipt = getattr(sale, "receipt", None)
+        if receipt is not None and not receipt.is_cancelled:
+            receipt.cancelled_at = timezone.now()
+            receipt.cancellation_reason = reason
+            receipt.updated_by = actor
+            receipt.save(
+                update_fields=[
+                    "cancelled_at", "cancellation_reason", "updated_by", "updated_at",
+                ]
+            )
+            record(
+                AuditAction.CANCEL,
+                SalesReceipt._meta.label,
+                entity_id=str(receipt.pk),
+                entity_label=receipt.receipt_number,
+                new_value={"cancelled": True},
+                notes=f"Receipt cancelled with its sale: {reason}",
+                actor=actor,
+            )
 
     release_reservations(source_type="sales.Sale", source_id=str(sale.pk))
 
@@ -576,6 +900,11 @@ def process_return(
                 "product_code": sale_line.product.product_code,
                 "description": f"{sale_line.product.display_name} â€” {_('return')}",
                 "batch_numbers": allocation.batch_number,
+                # Same format as the sale path above, so a credit note and the
+                # invoice it corrects show the same batch and expiry side by
+                # side — that pairing is what makes the two reconcilable
+                # during a recall.
+                "expiry_dates": allocation.expiry_date.strftime("%m/%Y"),
                 "quantity": quantity,
                 "unit_price": sale_line.unit_price,
                 "discount_percent": sale_line.discount_percent,
@@ -597,6 +926,10 @@ def process_return(
         sale.status = SaleStatus.PARTIALLY_RETURNED
     sale.save(update_fields=["status", "updated_at"])
 
+    # A credit note corrects an invoice. A cash sale that was only receipted
+    # has none, and the refund is settled at the counter against the receipt —
+    # so there is nothing to credit and no note is raised. The stock movements
+    # and the SaleReturn record above are the full trail in that case.
     if issue_credit_note and credit_lines:
         invoice = getattr(sale, "invoice", None)
         if invoice is not None:
@@ -620,6 +953,61 @@ def process_return(
         actor=actor,
     )
     return sale_return
+
+
+def register_receipt_print(receipt: SalesReceipt, *, actor=None) -> int:
+    """
+    Claim the next copy number for a receipt, and return it.
+
+    Same contract as `invoicing.services.register_print`: the number is claimed
+    by an atomic increment and read back, so two concurrent prints cannot both
+    be recorded as copy #1. A receipt is the customer's proof of payment, and a
+    reprint of one has to be as traceable as a reprint of an invoice.
+    """
+    from django.db.models import F
+
+    receipt.print_count = F("print_count") + 1
+    receipt.last_printed_at = timezone.now()
+    receipt.save(update_fields=["print_count", "last_printed_at"])
+    receipt.refresh_from_db(fields=["print_count"])
+    copy_number = receipt.print_count
+
+    record(
+        AuditAction.PRINT,
+        SalesReceipt._meta.label,
+        entity_id=str(receipt.pk),
+        entity_label=receipt.receipt_number,
+        notes=f"Receipt printed (copy #{copy_number})",
+        actor=actor,
+    )
+    return copy_number
+
+
+def release_receipt_print(
+    receipt: SalesReceipt, copy_number: int, *, reason: str, actor=None
+) -> None:
+    """
+    Give back a copy number claimed for a receipt that was never produced.
+
+    The claim is released rather than the audit entry deleted — the log is a
+    hash chain, so the PRINT entry stays and a compensating note follows it.
+    """
+    from django.db.models import F
+
+    updated = SalesReceipt.objects.filter(pk=receipt.pk, print_count__gt=0).update(
+        print_count=F("print_count") - 1, updated_at=timezone.now()
+    )
+    if updated:
+        receipt.refresh_from_db(fields=["print_count"])
+
+    record(
+        AuditAction.PRINT,
+        SalesReceipt._meta.label,
+        entity_id=str(receipt.pk),
+        entity_label=receipt.receipt_number,
+        notes=f"Receipt copy #{copy_number} released, not produced: {reason}",
+        actor=actor,
+    )
 
 
 def trace_batch_recipients(batch_number: str) -> list[dict]:

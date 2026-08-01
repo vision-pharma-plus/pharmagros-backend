@@ -29,7 +29,7 @@ def email_invoice(invoice_id: str, language: str = "fr") -> bool:
     try:
         with translation.override(language):
             context = {"invoice": invoice, "company": settings.COMPANY}
-            subject = _("%(company)s — Invoice %(number)s") % {
+            subject = _("%(company)s : Invoice %(number)s") % {
                 "company": settings.COMPANY["NAME"],
                 "number": invoice.invoice_number,
             }
@@ -53,6 +53,141 @@ def email_invoice(invoice_id: str, language: str = "fr") -> bool:
     except Exception:
         logger.exception("invoice_email_failed", extra={"invoice_id": invoice_id})
         return False
+
+
+@shared_task(name="apps.invoicing.tasks.declare_pending_invoices")
+def declare_pending_invoices(limit: int = 100) -> dict:
+    """
+    Drain the queue of documents awaiting declaration to the OBR.
+
+    This is the counterpart to posting never blocking on the network: the
+    backlog that builds during an outage is worked off here. Documents are
+    taken oldest-first and each is handled independently, so one that the
+    OBR refuses does not stall the ones behind it.
+
+    Runs every few minutes. `limit` bounds a single pass so a long backlog
+    is spread over several runs rather than occupying a worker indefinitely.
+    """
+    from .fiscal import service as fiscal
+    from .fiscal.client import OBRError
+
+    if not fiscal.is_enabled():
+        return {"skipped": "disabled"}
+
+    declared = failed = deferred = 0
+
+    for invoice in fiscal.pending_queue()[:limit]:
+        # Respect the backoff: a document that failed minutes ago is left
+        # alone so a sustained outage is not hammered every sweep.
+        if not fiscal.is_due_for_retry(invoice):
+            deferred += 1
+            continue
+
+        try:
+            fiscal.declare_invoice(invoice)
+            declared += 1
+        except OBRError:
+            # Already recorded against the invoice and the request log by
+            # the service; counted here so the sweep can report on itself.
+            failed += 1
+        except Exception:
+            failed += 1
+            logger.exception(
+                "obr_declaration_unexpected_error",
+                extra={"invoice": invoice.invoice_number},
+            )
+
+    if declared or failed:
+        logger.info(
+            "obr_declaration_sweep",
+            extra={"declared": declared, "failed": failed, "deferred": deferred},
+        )
+
+    return {"declared": declared, "failed": failed, "deferred": deferred}
+
+
+@shared_task(name="apps.invoicing.tasks.declare_pending_cancellations")
+def declare_pending_cancellations(limit: int = 50) -> dict:
+    """
+    Withdraw, at the OBR, documents cancelled locally after declaration.
+
+    Kept separate from the submission sweep because the two fail for
+    different reasons and a backlog of one should not delay the other.
+    """
+    from .fiscal import service as fiscal
+    from .fiscal.client import OBRError
+
+    from .models import FiscalStatus, Invoice, InvoiceStatus
+
+    if not fiscal.is_enabled():
+        return {"skipped": "disabled"}
+
+    pending = Invoice.objects.filter(
+        status=InvoiceStatus.CANCELLED,
+        fiscal_status=FiscalStatus.DECLARED,
+        deleted_at__isnull=True,
+    ).order_by("cancelled_at")[:limit]
+
+    withdrawn = failed = 0
+    for invoice in pending:
+        try:
+            fiscal.declare_cancellation(invoice, reason=invoice.cancellation_reason)
+            withdrawn += 1
+        except OBRError:
+            failed += 1
+        except Exception:
+            failed += 1
+            logger.exception(
+                "obr_cancellation_unexpected_error",
+                extra={"invoice": invoice.invoice_number},
+            )
+
+    return {"withdrawn": withdrawn, "failed": failed}
+
+
+@shared_task(name="apps.invoicing.tasks.alert_stuck_declarations")
+def alert_stuck_declarations() -> dict:
+    """
+    Raise documents that have exhausted their retries.
+
+    A document the OBR keeps refusing is a compliance exposure that grows
+    quietly: nothing in the commercial workflow surfaces it, because the
+    invoice is posted, printed and possibly paid. This is the signal that
+    someone must intervene.
+    """
+    from apps.notifications.models import NotificationCode, NotificationSeverity
+    from apps.notifications.services import notify_permission_holders
+
+    from .fiscal import service as fiscal
+
+    if not fiscal.is_enabled():
+        return {"skipped": "disabled"}
+
+    stuck = fiscal.stuck_queue()
+    count = stuck.count()
+    if not count:
+        return {"stuck": 0}
+
+    today = timezone.localdate()
+    notify_permission_holders(
+        permission_code="invoicing.declare_invoice",
+        code=NotificationCode.OBR_DECLARATION_FAILED,
+        title=str(
+            _("%(count)d invoices could not be declared to the OBR") % {"count": count}
+        ),
+        body=str(
+            _(
+                "These documents have exhausted their retry attempts and remain "
+                "undeclared. Review them and resubmit once the cause is corrected."
+            )
+        ),
+        severity=NotificationSeverity.CRITICAL,
+        link="/invoicing/invoices?fiscal_status=REJECTED",
+        dedupe_key=f"obr-stuck-{today:%Y-%m-%d}",
+    )
+
+    logger.warning("obr_declarations_stuck", extra={"count": count})
+    return {"stuck": count}
 
 
 @shared_task(name="apps.invoicing.tasks.send_due_reminders")

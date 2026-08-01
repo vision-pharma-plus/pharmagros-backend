@@ -8,14 +8,13 @@ from django_filters import rest_framework as filters
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 
-from apps.core.exceptions import BusinessRuleViolation
+from apps.core.exceptions import BusinessRuleViolation, ServiceUnavailable
 from apps.core.permissions import HasPermission
 
 from . import services
-from .models import Invoice, InvoiceStatus, Payment
+from .models import FiscalStatus, Invoice, InvoiceStatus, Payment
 from .serializers import (
     CancelInvoiceSerializer,
     CreditNoteSerializer,
@@ -30,13 +29,6 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
-class ServiceUnavailable(APIException):
-    """A dependency the server needs is not installed or reachable."""
-
-    status_code = 503
-    default_code = "service_unavailable"
-
-
 class InvoiceFilter(filters.FilterSet):
     date_from = filters.DateTimeFilter(field_name="invoice_date", lookup_expr="gte")
     date_to = filters.DateTimeFilter(field_name="invoice_date", lookup_expr="lte")
@@ -46,7 +38,9 @@ class InvoiceFilter(filters.FilterSet):
 
     class Meta:
         model = Invoice
-        fields = ["status", "invoice_type", "customer", "is_credit_sale"]
+        fields = [
+            "status", "invoice_type", "customer", "is_credit_sale", "fiscal_status",
+        ]
 
     def filter_overdue(self, queryset, name, value):
         today = timezone.localdate()
@@ -111,6 +105,7 @@ class InvoiceViewSet(
         "pdf": "invoicing.print_invoice",
         "email": "invoicing.email_invoice",
         "payments": "invoicing.view_invoice",
+        "declare": "invoicing.declare_invoice",
     }
 
     def get_serializer_class(self):
@@ -121,7 +116,42 @@ class InvoiceViewSet(
         return InvoiceSerializer
 
     def get_queryset(self):
-        return super().get_queryset().prefetch_related("lines")
+        queryset = super().get_queryset().prefetch_related("lines")
+        if self.action != "list":
+            queryset = queryset.prefetch_related("corrections")
+        return queryset
+
+    def get_serializer_context(self):
+        """
+        Attach the sale lines behind a single invoice, keyed by product.
+
+        Lets the line serializer report what is still returnable, which is
+        what the credit note workflow needs to offer a goods return. Only
+        built for single-invoice responses: doing it per row in a list would
+        be a query per invoice for a field the list does not render.
+        """
+        context = super().get_serializer_context()
+        if self.action not in {"retrieve", "credit_note"}:
+            return context
+
+        invoice = getattr(self, "_invoice_for_context", None)
+        if invoice is None or invoice.sale_id is None:
+            return context
+
+        from apps.sales.models import SaleLine
+
+        context["sale_lines_by_product"] = {
+            sale_line.product_id: sale_line
+            for sale_line in SaleLine.objects.filter(sale_id=invoice.sale_id)
+        }
+        return context
+
+    def get_object(self):
+        invoice = super().get_object()
+        # Stashed so get_serializer_context can resolve the sale lines without
+        # fetching the invoice a second time.
+        self._invoice_for_context = invoice
+        return invoice
 
     def create(self, request, *args, **kwargs):
         from apps.catalog.models import Medicine
@@ -190,10 +220,16 @@ class InvoiceViewSet(
             for line in raw_lines
         ]
 
-        note = services.issue_credit_note(
-            invoice, lines=lines, reason=data["reason"], actor=request.user
+        note = services.issue_credit_note_for_invoice(
+            invoice,
+            lines=lines,
+            reason=data["reason"],
+            reason_code=data["reason_code"],
+            actor=request.user,
         )
-        return Response(InvoiceSerializer(note).data, status=201)
+        return Response(
+            InvoiceSerializer(note, context=self.get_serializer_context()).data, status=201
+        )
 
     @extend_schema(
         tags=["invoicing"], summary="Download invoice PDF",
@@ -210,36 +246,33 @@ class InvoiceViewSet(
         """
         Render the invoice as PDF.
 
-        Every render is registered, and any render after the first is stamped
-        DUPLICATE — an unmarked second original of a fiscal document is a
-        fraud vector.
+        Every render is registered so reprints remain auditable, but the page
+        itself is identical on every copy — no DUPLICATE marking.
         """
         invoice = self.get_object()
         language = request.query_params.get("language") or "fr"
 
-        is_duplicate = invoice.print_count > 0
+        from .pdf import PDFEngineUnavailable, render_invoice_pdf
 
-        # Render before registering: a failed render must not inflate the
-        # print count, or the next successful copy is wrongly stamped
-        # DUPLICATE. The import is here because WeasyPrint needs native
-        # libraries that need not be installed for the rest of the app.
+        # Registered before rendering so a print is never served without a
+        # corresponding audit entry.
+        copy_number = services.register_print(invoice, actor=request.user)
+
         try:
-            from .pdf import render_invoice_pdf
-
-            pdf_bytes = render_invoice_pdf(
-                invoice, language=language, is_duplicate=is_duplicate
+            pdf_bytes = render_invoice_pdf(invoice, language=language)
+        except PDFEngineUnavailable as exc:
+            # The engine is missing (no GTK runtime on a Windows host, or the
+            # package itself absent). Hand back a 503 with setup instructions
+            # rather than a 500 — this is a deployment fault, not a bad
+            # request, and the operator needs to know what to install.
+            #
+            # Nothing was produced, so give the copy number back rather than
+            # leaving the counter inflated by attempts that yielded no document.
+            services.release_print(
+                invoice, copy_number, reason="PDF engine unavailable", actor=request.user
             )
-        except (ImportError, OSError) as exc:
-            # OSError is what cffi raises when Pango/Cairo are absent — the
-            # usual case on a Windows host outside Docker.
             logger.exception("Invoice PDF rendering is unavailable")
-            raise ServiceUnavailable(
-                "PDF rendering is unavailable on this server: the WeasyPrint "
-                "native libraries (Pango/Cairo) are missing. Run the backend "
-                "in Docker or install the GTK runtime."
-            ) from exc
-
-        services.register_print(invoice, actor=request.user)
+            raise ServiceUnavailable(str(exc)) from exc
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = (
@@ -261,6 +294,61 @@ class InvoiceViewSet(
 
         email_invoice.delay(str(invoice.pk), request.query_params.get("language", "fr"))
         return Response({"detail": f"Invoice queued for delivery to {invoice.customer.email}."})
+
+    @extend_schema(
+        tags=["invoicing"],
+        summary="Re-submit this invoice to the OBR",
+        responses={200: InvoiceSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="declare")
+    def declare(self, request, pk=None):
+        """
+        Declare the invoice to the OBR now, rather than waiting for the sweep.
+
+        Intended for a document whose automatic attempts were exhausted: once
+        the underlying cause is fixed, this resets it into the queue and tries
+        immediately, so the operator gets an answer instead of waiting for the
+        next scheduled pass.
+        """
+        from .fiscal import service as fiscal
+        from .fiscal.client import OBRError
+
+        invoice = self.get_object()
+
+        if not fiscal.is_enabled():
+            raise BusinessRuleViolation(
+                "OBR declaration is not enabled in this environment.",
+                code="obr_disabled",
+            )
+        if invoice.fiscal_status == FiscalStatus.DECLARED:
+            raise BusinessRuleViolation(
+                "This invoice has already been declared to the OBR.",
+                code="already_declared",
+            )
+        if not fiscal.is_declarable(invoice):
+            raise BusinessRuleViolation(
+                "This document type is not declared to the OBR.",
+                code="not_declarable",
+            )
+
+        # Clear the failure count so the retry ceiling does not immediately
+        # re-reject a document a human has deliberately resubmitted.
+        invoice.declaration_attempts = 0
+        invoice.fiscal_status = FiscalStatus.PENDING
+        invoice.save(update_fields=["declaration_attempts", "fiscal_status", "updated_at"])
+
+        try:
+            invoice = fiscal.declare_invoice(invoice, actor=request.user)
+        except OBRError as exc:
+            # The attempt is already recorded against the invoice and in the
+            # request log; report why it failed rather than a bare 500.
+            raise BusinessRuleViolation(
+                f"The OBR rejected this declaration: {exc.message}",
+                code="obr_rejected",
+                details={"status_code": exc.status_code, "retryable": exc.retryable},
+            ) from exc
+
+        return Response(InvoiceSerializer(invoice).data)
 
     @extend_schema(
         tags=["invoicing"], summary="Payments applied to this invoice",

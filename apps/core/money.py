@@ -72,6 +72,32 @@ def apply_percentage(base, percent) -> Decimal:
     return q_internal(to_decimal(base) * to_decimal(percent) / HUNDRED)
 
 
+def price_ex_tax(price_incl_tax, tax_rate_percent=ZERO) -> Decimal:
+    """
+    Extract the tax-exclusive (HT) price from a tax-inclusive (TTC) one.
+
+    Catalogue prices are entered and displayed TTC — the shelf price a customer
+    actually pays — but every downstream computation (`compute_line`, the tax
+    summary, the OBR fiscal payload) needs the HT base. This is the single
+    inverse of the tax step in `compute_line`, so the two must stay in sync:
+
+        compute_line:  TTC = HT * (1 + rate/100)
+        price_ex_tax:  HT  = TTC / (1 + rate/100)
+
+    A zero rate returns the price unchanged rather than dividing by one, which
+    keeps exempt and zero-rated products exact instead of merely close.
+
+    The result is deliberately NOT rounded to whole francs: 180 TTC at 18% is
+    152.5424 HT, and quantising here would break the round trip back to 180 on
+    the printed line. Rounding stays at the document boundary, as everywhere.
+    """
+    price = to_decimal(price_incl_tax)
+    rate = to_decimal(tax_rate_percent)
+    if rate == ZERO:
+        return q_internal(price)
+    return q_internal(price / (Decimal("1") + rate / HUNDRED))
+
+
 def compute_line(
     quantity,
     unit_price,

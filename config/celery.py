@@ -31,6 +31,25 @@ app.conf.beat_schedule = {
         "task": "apps.invoicing.tasks.send_due_reminders",
         "schedule": crontab(hour=7, minute=0),
     },
+    # OBR declaration runs on a short cycle rather than nightly: the
+    # obligation is real-time reporting, and a document sitting undeclared
+    # for hours is the exposure this exists to close. Frequent, small passes
+    # also mean a backlog from an outage drains steadily once the link
+    # returns instead of arriving as one large burst.
+    "declare-invoices-to-obr": {
+        "task": "apps.invoicing.tasks.declare_pending_invoices",
+        "schedule": crontab(minute="*/10"),
+    },
+    "declare-cancellations-to-obr": {
+        "task": "apps.invoicing.tasks.declare_pending_cancellations",
+        "schedule": crontab(minute="*/30"),
+    },
+    # Once a day is enough to raise documents that have given up retrying:
+    # the condition needs a human, not a faster alarm.
+    "alert-stuck-obr-declarations": {
+        "task": "apps.invoicing.tasks.alert_stuck_declarations",
+        "schedule": crontab(hour=8, minute=30),
+    },
     "refresh-customer-balances": {
         "task": "apps.partners.tasks.recompute_outstanding_balances",
         "schedule": crontab(hour=1, minute=0),

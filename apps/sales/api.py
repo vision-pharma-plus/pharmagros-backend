@@ -1,4 +1,7 @@
+import logging
+
 from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters import rest_framework as filters
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
@@ -7,22 +10,27 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.exceptions import BusinessRuleViolation
+from apps.core.exceptions import BusinessRuleViolation, ServiceUnavailable
 from apps.core.permissions import HasPermission
 
 from . import services
-from .models import Sale, SaleLine, SaleReturn
+from .models import Sale, SaleLine, SaleReturn, SalesReceipt
 from .serializers import (
     CancelSerializer,
     ConfirmSaleSerializer,
+    InvoiceForReceiptSerializer,
     RecallTraceSerializer,
     SaleCreateSerializer,
     SaleListSerializer,
     SaleMarginSerializer,
     SaleReturnCreateSerializer,
     SaleReturnSerializer,
+    SalesReceiptListSerializer,
+    SalesReceiptSerializer,
     SaleSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SaleFilter(filters.FilterSet):
@@ -144,10 +152,13 @@ class SaleViewSet(
                 code="override_not_permitted",
             )
 
-        sale, invoice = services.confirm_sale(
+        sale, invoice, receipt = services.confirm_sale(
             sale,
             actor=request.user,
-            generate_invoice=data.get("generate_invoice", True),
+            generate_invoice=data.get("generate_invoice"),
+            payment_method=data.get("payment_method", "CASH"),
+            payment_reference=data.get("payment_reference", ""),
+            amount_tendered=data.get("amount_tendered"),
             credit_override_reason=override_reason,
             # The authoriser is the acting user; recording it separately keeps
             # the audit trail explicit about who accepted the risk.
@@ -157,6 +168,10 @@ class SaleViewSet(
         payload = SaleSerializer(sale).data
         payload["invoice_id"] = str(invoice.pk) if invoice else None
         payload["invoice_number"] = invoice.invoice_number if invoice else None
+        # The document the operator should be taken to. For a cash sale that is
+        # the receipt, which is the only thing the customer is waiting for.
+        payload["receipt_id"] = str(receipt.pk) if receipt else None
+        payload["receipt_number"] = receipt.receipt_number if receipt else None
         return Response(payload)
 
     @extend_schema(tags=["sales"], summary="Cancel a sale", request=CancelSerializer)
@@ -262,6 +277,148 @@ class SaleReturnViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewse
         "list": "sales.view_sale",
         "retrieve": "sales.view_sale",
     }
+
+
+class SalesReceiptFilter(filters.FilterSet):
+    date_from = filters.DateTimeFilter(field_name="issued_at", lookup_expr="gte")
+    date_to = filters.DateTimeFilter(field_name="issued_at", lookup_expr="lte")
+    # Answers "which counter sales still have no invoice", which is what the
+    # end-of-day check and any tax-driven invoicing sweep both need.
+    invoiced = filters.BooleanFilter(method="filter_invoiced")
+    search = filters.CharFilter(method="filter_search")
+
+    class Meta:
+        model = SalesReceipt
+        fields = ["customer", "payment_method"]
+
+    def filter_invoiced(self, queryset, name, value):
+        return queryset.filter(sale__invoice__isnull=not value)
+
+    def filter_search(self, queryset, name, value):
+        return queryset.filter(
+            Q(receipt_number__icontains=value)
+            | Q(customer_name__icontains=value)
+            | Q(sale__sale_number__icontains=value)
+        )
+
+
+@extend_schema_view(
+    list=extend_schema(tags=["sales"], summary="List sales receipts"),
+    retrieve=extend_schema(tags=["sales"], summary="Retrieve a sales receipt"),
+)
+class SalesReceiptViewSet(
+    mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet
+):
+    """
+    Cash sale receipts.
+
+    Created only by confirming a cash sale — never directly, because a receipt
+    without the sale behind it would be proof of a payment for nothing. There
+    is likewise no update or destroy route: a receipt is cancelled by
+    cancelling its sale, which is what also returns the stock.
+    """
+
+    queryset = SalesReceipt.objects.filter(deleted_at__isnull=True).select_related(
+        "sale", "customer", "issued_by", "sale__invoice"
+    )
+    filterset_class = SalesReceiptFilter
+    search_fields = ["receipt_number", "customer_name", "sale__sale_number"]
+    ordering_fields = ["issued_at", "receipt_number"]
+    ordering = ["-issued_at"]
+    permission_classes = [HasPermission]
+    required_permissions = {
+        "list": "sales.view_sale",
+        "retrieve": "sales.view_sale",
+        "pdf": "sales.print_receipt",
+        "invoice": "sales.invoice_receipt",
+    }
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return SalesReceiptListSerializer
+        return SalesReceiptSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action != "list":
+            # The detail view renders the sale's lines and their batches.
+            queryset = queryset.prefetch_related(
+                "sale__lines__product", "sale__lines__batch_allocations"
+            )
+        return queryset
+
+    @extend_schema(
+        tags=["sales"],
+        summary="Issue an invoice for this cash sale",
+        request=InvoiceForReceiptSerializer,
+        responses={201: None},
+    )
+    @action(detail=True, methods=["post"])
+    def invoice(self, request, pk=None):
+        """
+        Raise an invoice for an already-receipted cash sale.
+
+        Covers both the customer who asks for an invoice after paying and the
+        tax rule that requires one. The receipt stays valid and the sale is not
+        repeated: no stock moves, no tax is recomputed, no revenue is posted a
+        second time. See `services.invoice_for_receipt`.
+        """
+        from apps.invoicing.serializers import InvoiceSerializer
+
+        receipt = self.get_object()
+        serializer = InvoiceForReceiptSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        invoice = services.invoice_for_receipt(
+            receipt,
+            reason=serializer.validated_data.get("reason", ""),
+            actor=request.user,
+        )
+        return Response(InvoiceSerializer(invoice).data, status=201)
+
+    @extend_schema(
+        tags=["sales"],
+        summary="Download receipt PDF",
+        parameters=[
+            OpenApiParameter(
+                "language", str, description="fr or en. Defaults to fr.",
+            )
+        ],
+        responses={200: bytes},
+    )
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        """
+        Render the receipt as an 80 mm counter document.
+
+        Registered before rendering so a printed receipt is never served
+        without a matching audit entry, and released again if the engine is
+        missing — the same contract as the invoice PDF route.
+        """
+        receipt = self.get_object()
+        language = request.query_params.get("language") or "fr"
+
+        from .pdf import PDFEngineUnavailable, render_receipt_pdf
+
+        copy_number = services.register_receipt_print(receipt, actor=request.user)
+
+        try:
+            pdf_bytes = render_receipt_pdf(receipt, language=language)
+        except PDFEngineUnavailable as exc:
+            # A deployment fault, not a bad request: hand back a 503 with
+            # setup instructions and give the copy number back, so the reprint
+            # history does not show copies that were never produced.
+            services.release_receipt_print(
+                receipt, copy_number, reason="PDF engine unavailable", actor=request.user
+            )
+            logger.exception("Receipt PDF rendering is unavailable")
+            raise ServiceUnavailable(str(exc)) from exc
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'inline; filename="{receipt.receipt_number}.pdf"'
+        )
+        return response
 
 
 class RecallTraceView(APIView):

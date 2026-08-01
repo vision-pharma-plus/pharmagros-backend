@@ -17,10 +17,12 @@ from apps.core.exceptions import (
     DocumentLocked,
     InvalidStateTransition,
 )
-from apps.invoicing.models import InvoiceStatus, InvoiceType
+from apps.core.money import q_document
+from apps.invoicing.models import CreditNoteReason, InvoiceStatus, InvoiceType
 from apps.invoicing.services import (
     cancel_invoice,
     issue_credit_note,
+    issue_credit_note_for_invoice,
     record_payment,
     reverse_payment,
     update_invoice,
@@ -37,6 +39,16 @@ from apps.sales.services import (
 
 pytestmark = pytest.mark.django_db
 
+# The `confirmed_sale` invoice total, at internal (4 dp) precision.
+#
+# 100 units of a product listed at 1500 TTC. Extracting 18% VAT gives a net
+# base of 1271.1864 that does not divide evenly, so the internal total carries
+# a 0.0048 residue below one franc. It is deliberately not rounded here:
+# balances and payments compare internal values, and rounding early is what
+# `apps.core.money` exists to prevent. `q_document` collapses it to exactly
+# 150,000 at the one place it matters — the printed page.
+INVOICE_TOTAL = Decimal("149999.9952")
+
 
 @pytest.fixture
 def confirmed_sale(product, warehouse, credit_customer, batch, pharmacist):
@@ -48,7 +60,11 @@ def confirmed_sale(product, warehouse, credit_customer, batch, pharmacist):
         lines=[{"product": product, "quantity": Decimal("100")}],
         actor=pharmacist,
     )
-    return confirm_sale(sale, actor=pharmacist)
+    # A credit sale, so the closing document is the invoice and no receipt is
+    # raised. Sliced to (sale, invoice) because that pair is what every test
+    # below reads; the receipt path is covered by its own fixture.
+    sale, invoice, _receipt = confirm_sale(sale, actor=pharmacist)
+    return sale, invoice
 
 
 class TestSaleCreation:
@@ -83,12 +99,70 @@ class TestSaleCreation:
     def test_price_defaults_to_catalogue(
         self, product, warehouse, cash_customer, pharmacist
     ):
+        """
+        The catalogue price is VAT-inclusive; the line stores the net base.
+
+        1500 TTC at 18% is 1271.1864 net, which is what the fiscal payload and
+        the tax summary are computed from. The customer-facing figure is
+        checked by the round-trip test below rather than here.
+        """
         sale = create_sale(
             customer=cash_customer, warehouse=warehouse,
             lines=[{"product": product, "quantity": Decimal("10")}],
             actor=pharmacist,
         )
-        assert sale.lines.first().unit_price == product.selling_price
+        assert sale.lines.first().unit_price == Decimal("1271.1864")
+
+    def test_catalogue_price_is_what_the_customer_pays(
+        self, product, warehouse, cash_customer, pharmacist
+    ):
+        """
+        The whole point of VAT-inclusive pricing: the shelf price is the price.
+
+        A product listed at 1500 must total 1500 per unit on the document, with
+        VAT already inside it — not 1500 plus 270.
+        """
+        sale = create_sale(
+            customer=cash_customer, warehouse=warehouse,
+            lines=[{"product": product, "quantity": Decimal("10")}],
+            actor=pharmacist,
+        )
+        assert q_document(sale.total_amount) == Decimal("15000")
+
+    def test_explicit_price_override_is_vat_inclusive(
+        self, product, warehouse, cash_customer, pharmacist
+    ):
+        """
+        An override typed at the counter is quoted in the same terms as the
+        shelf price. Treating it as already-net would apply VAT twice and
+        undercharge the customer on every manually priced line.
+        """
+        sale = create_sale(
+            customer=cash_customer, warehouse=warehouse,
+            lines=[{
+                "product": product,
+                "quantity": Decimal("1"),
+                "unit_price": Decimal("180"),
+            }],
+            actor=pharmacist,
+        )
+        assert sale.lines.first().unit_price == Decimal("152.5424")
+        assert q_document(sale.total_amount) == Decimal("180")
+
+    def test_exempt_product_price_is_unchanged_by_extraction(
+        self, exempt_product, warehouse, cash_customer, pharmacist
+    ):
+        """
+        A zero rate must leave the price exactly alone. Dividing by 1.18 on an
+        exempt line would quietly discount it by the VAT it never carried.
+        """
+        sale = create_sale(
+            customer=cash_customer, warehouse=warehouse,
+            lines=[{"product": exempt_product, "quantity": Decimal("10")}],
+            actor=pharmacist,
+        )
+        assert sale.lines.first().unit_price == Decimal("800.0000")
+        assert q_document(sale.total_amount) == Decimal("8000")
 
     def test_vat_exempt_product_carries_no_tax(
         self, exempt_product, warehouse, cash_customer, pharmacist
@@ -112,12 +186,29 @@ class TestConfirmation:
         assert batch.quantity_remaining == Decimal("400.000")
 
     def test_invoice_totals(self, confirmed_sale):
-        """100 x 1500 = 150,000 net; 18% VAT = 27,000; total 177,000."""
+        """
+        100 x 1500 TTC = 150,000 payable, VAT included.
+
+        The catalogue price is VAT-inclusive, so the total is the shelf price
+        times quantity — no addition on top. The net base and VAT are the
+        decomposition of that figure: 127,118.64 + 22,881.3552, which rounds
+        to 150,000 at the document boundary.
+        """
         _sale, invoice = confirmed_sale
-        assert invoice.subtotal == Decimal("150000.0000")
-        assert invoice.tax_amount == Decimal("27000.0000")
-        assert invoice.total_amount == Decimal("177000.0000")
+        assert invoice.subtotal == Decimal("127118.6400")
+        assert invoice.tax_amount == Decimal("22881.3552")
         assert invoice.balance_due == invoice.total_amount
+
+        # The decomposition is exact at internal precision — no residue between
+        # the parts and their sum, which is what reconciliation checks.
+        assert invoice.subtotal + invoice.tax_amount == invoice.total_amount
+
+        # Extracting VAT from a round shelf price gives a net base that does not
+        # divide evenly, so 100 units carry a sub-franc residue internally
+        # (149,999.9952). It is carried at 4 dp and rounded exactly once, at the
+        # document boundary — which is where the customer-facing number is made
+        # and where it must come out at the shelf price times quantity.
+        assert q_document(invoice.total_amount) == Decimal("150000")
 
     def test_customer_identity_is_frozen(self, confirmed_sale, credit_customer):
         """
@@ -139,10 +230,19 @@ class TestConfirmation:
         assert invoice.lines.first().batch_numbers == "LOT-A"
 
     def test_cost_captured_from_actual_batches(self, confirmed_sale):
-        """Margin must reflect what shipped, not a catalogue estimate."""
+        """
+        Margin must reflect what shipped, not a catalogue estimate.
+
+        Margin is a net-of-VAT figure on both sides: the batch cost carries no
+        VAT, and the revenue compared against it is the net base rather than
+        the VAT-inclusive shelf price. The tax collected belongs to the
+        revenue authority, so counting it as margin would overstate profit by
+        the whole VAT amount.
+        """
         sale, _invoice = confirmed_sale
         assert sale.total_cost == Decimal("100000.0000")  # 100 x 1000
-        assert sale.gross_margin == Decimal("50000.0000")
+        # 127,118.64 net revenue - 100,000 cost
+        assert sale.gross_margin == Decimal("27118.6400")
 
     def test_double_confirmation_is_refused(self, confirmed_sale, pharmacist):
         sale, _invoice = confirmed_sale
@@ -203,7 +303,7 @@ class TestCreditControl:
             lines=[{"product": product, "quantity": Decimal("100")}],
             actor=pharmacist,
         )
-        sale, invoice = confirm_sale(
+        sale, invoice, _receipt = confirm_sale(
             sale, actor=pharmacist,
             credit_override_reason="Accord direction",
             credit_override_by=store_manager,
@@ -238,7 +338,7 @@ class TestCreditControl:
         credit_customer.outstanding_balance = Decimal("999999")
         credit_customer.save(update_fields=["outstanding_balance"])
 
-        assert recompute_balance(credit_customer) == Decimal("177000.0000")
+        assert recompute_balance(credit_customer) == INVOICE_TOTAL
 
 
 class TestPayments:
@@ -250,12 +350,12 @@ class TestPayments:
         )
         invoice.refresh_from_db()
         assert invoice.status == InvoiceStatus.PARTIALLY_PAID
-        assert invoice.balance_due == Decimal("77000.0000")
+        assert invoice.balance_due == INVOICE_TOTAL - Decimal("100000")
 
     def test_full_payment_marks_paid(self, confirmed_sale, credit_customer, pharmacist):
         _sale, invoice = confirmed_sale
         record_payment(
-            customer=credit_customer, amount=Decimal("177000"), actor=pharmacist,
+            customer=credit_customer, amount=INVOICE_TOTAL, actor=pharmacist,
         )
         invoice.refresh_from_db()
         assert invoice.status == InvoiceStatus.PAID
@@ -270,7 +370,7 @@ class TestPayments:
         )
         invoice.refresh_from_db()
         assert invoice.balance_due == Decimal("0")
-        assert payment.unallocated_amount == Decimal("23000.0000")
+        assert payment.unallocated_amount == Decimal("200000") - INVOICE_TOTAL
 
     def test_reversal_restores_the_balance(
         self, confirmed_sale, credit_customer, pharmacist
@@ -287,7 +387,7 @@ class TestPayments:
 
         invoice.refresh_from_db()
         payment.refresh_from_db()
-        assert invoice.balance_due == Decimal("177000.0000")
+        assert invoice.balance_due == INVOICE_TOTAL
         assert invoice.status == InvoiceStatus.POSTED
         assert payment.is_reversed is True
 
@@ -326,6 +426,10 @@ class TestInvoiceImmutability:
 class TestCreditNotes:
     def test_credit_note_offsets_the_original(self, confirmed_sale, product, pharmacist):
         _sale, invoice = confirmed_sale
+        # The invoicing layer is the ledger: it takes the net unit price that
+        # was actually invoiced, not the VAT-inclusive shelf price. A credit
+        # note must offset the original line exactly, so it is raised on the
+        # same basis the original was posted on.
         note = issue_credit_note(
             invoice,
             lines=[
@@ -333,7 +437,7 @@ class TestCreditNotes:
                     "product": product,
                     "description": "Retour",
                     "quantity": Decimal("10"),
-                    "unit_price": Decimal("1500"),
+                    "unit_price": Decimal("1271.1864"),
                     "tax_rate": Decimal("18"),
                 }
             ],
@@ -344,13 +448,267 @@ class TestCreditNotes:
         assert note.original_invoice_id == invoice.pk
 
         invoice.refresh_from_db()
-        # 10 x 1500 x 1.18 = 17,700 credited
-        assert invoice.balance_due == Decimal("159300.0000")
+        # 10 of the 100 units returned, so a tenth of the invoice is credited:
+        # 15,000 of the 150,000 the customer was billed.
+        assert q_document(invoice.balance_due) == Decimal("135000")
 
     def test_credit_note_requires_a_reason(self, confirmed_sale, product, pharmacist):
         _sale, invoice = confirmed_sale
         with pytest.raises(BusinessRuleViolation):
             issue_credit_note(invoice, lines=[], reason="", actor=pharmacist)
+
+    def test_a_credit_note_cannot_itself_be_credited(
+        self, confirmed_sale, product, pharmacist
+    ):
+        """Correcting a correction is a new invoice, not another credit."""
+        _sale, invoice = confirmed_sale
+        note = issue_credit_note(
+            invoice,
+            lines=[
+                {
+                    "product": product,
+                    "description": "Retour",
+                    "quantity": Decimal("10"),
+                    "unit_price": Decimal("1271.1864"),
+                    "tax_rate": Decimal("18"),
+                }
+            ],
+            reason="Marchandise endommagée",
+            actor=pharmacist,
+        )
+
+        with pytest.raises(BusinessRuleViolation) as exc:
+            issue_credit_note(
+                note,
+                lines=[
+                    {
+                        "product": product,
+                        "description": "Retour",
+                        "quantity": Decimal("1"),
+                        "unit_price": Decimal("1271.1864"),
+                    }
+                ],
+                reason="Erreur",
+                actor=pharmacist,
+            )
+        assert exc.value.code == "cannot_credit_a_credit_note"
+
+
+class TestCreditNoteGoodsReturn:
+    """
+    The invoice-side entry point behind the "Issue credit note" action.
+
+    A correction for returned goods has to reconcile stock as well as money;
+    every other reason is a financial correction and must leave stock alone.
+    """
+
+    def _return_line(self, sale, *, quantity: str, restock: bool) -> dict:
+        sale_line = sale.lines.first()
+        return {
+            "product": sale_line.product,
+            "description": sale_line.product.display_name,
+            "quantity": Decimal(quantity),
+            "unit_price": sale_line.unit_price,
+            "tax_rate": sale_line.tax_rate,
+            "sale_line": sale_line.pk,
+            "restock": restock,
+        }
+
+    def test_returned_goods_go_back_into_stock(
+        self, confirmed_sale, batch, pharmacist
+    ):
+        sale, invoice = confirmed_sale
+        # 500 received, 100 sold. The fixture instance predates the sale, so
+        # it has to be reloaded before it shows the issue.
+        batch.refresh_from_db()
+        assert batch.quantity_remaining == Decimal("400")
+
+        note = issue_credit_note_for_invoice(
+            invoice,
+            lines=[self._return_line(sale, quantity="10", restock=True)],
+            reason="Colis refusé à la livraison",
+            reason_code=CreditNoteReason.GOODS_RETURNED,
+            actor=pharmacist,
+        )
+
+        assert note.invoice_type == InvoiceType.CREDIT_NOTE
+        assert note.original_invoice_id == invoice.pk
+        assert note.credit_reason_code == CreditNoteReason.GOODS_RETURNED
+
+        batch.refresh_from_db()
+        assert batch.quantity_remaining == Decimal("410")
+
+    def test_damaged_goods_are_credited_but_not_restocked(
+        self, confirmed_sale, batch, pharmacist
+    ):
+        """
+        The customer is still refunded; the units are written off rather than
+        resold. Crediting and restocking are separate decisions.
+        """
+        sale, invoice = confirmed_sale
+
+        note = issue_credit_note_for_invoice(
+            invoice,
+            lines=[self._return_line(sale, quantity="10", restock=False)],
+            reason="Flacons brisés",
+            reason_code=CreditNoteReason.GOODS_DAMAGED,
+            actor=pharmacist,
+        )
+
+        assert note.total_amount > Decimal("0")
+        batch.refresh_from_db()
+        # Back in and straight out again: the ledger shows both movements,
+        # and sellable stock is unchanged.
+        assert batch.quantity_remaining == Decimal("400")
+
+    def test_a_pricing_correction_does_not_touch_stock(
+        self, confirmed_sale, batch, pharmacist
+    ):
+        sale, invoice = confirmed_sale
+        sale_line = sale.lines.first()
+
+        issue_credit_note_for_invoice(
+            invoice,
+            lines=[
+                {
+                    "product": sale_line.product,
+                    "description": "Écart de prix",
+                    "quantity": Decimal("100"),
+                    "unit_price": Decimal("100"),
+                    "tax_rate": sale_line.tax_rate,
+                }
+            ],
+            reason="Prix unitaire surfacturé",
+            reason_code=CreditNoteReason.WRONG_PRICE,
+            actor=pharmacist,
+        )
+
+        batch.refresh_from_db()
+        assert batch.quantity_remaining == Decimal("400")
+        # And nothing was recorded as having come back.
+        sale_line.refresh_from_db()
+        assert sale_line.quantity_returned == Decimal("0")
+
+    def test_returned_goods_reduce_what_the_customer_owes(
+        self, confirmed_sale, pharmacist
+    ):
+        sale, invoice = confirmed_sale
+        original_balance = invoice.balance_due
+
+        note = issue_credit_note_for_invoice(
+            invoice,
+            lines=[self._return_line(sale, quantity="10", restock=True)],
+            reason="Retour partiel",
+            reason_code=CreditNoteReason.GOODS_RETURNED,
+            actor=pharmacist,
+        )
+
+        invoice.refresh_from_db()
+        # Compared at internal precision: the credit is subtracted from the
+        # stored balance, and rounding either side to the printed franc here
+        # would hide a residue that reconciliation is meant to catch.
+        assert invoice.balance_due == original_balance - note.total_amount
+        assert q_document(invoice.balance_due) == Decimal("135000")
+
+    def test_crediting_more_than_remains_returnable_is_refused(
+        self, confirmed_sale, pharmacist
+    ):
+        """The second return cannot take back units the first already did."""
+        sale, invoice = confirmed_sale
+        issue_credit_note_for_invoice(
+            invoice,
+            lines=[self._return_line(sale, quantity="60", restock=True)],
+            reason="Premier retour",
+            reason_code=CreditNoteReason.GOODS_RETURNED,
+            actor=pharmacist,
+        )
+
+        with pytest.raises(BusinessRuleViolation) as exc:
+            issue_credit_note_for_invoice(
+                invoice,
+                lines=[self._return_line(sale, quantity="50", restock=True)],
+                reason="Second retour",
+                reason_code=CreditNoteReason.GOODS_RETURNED,
+                actor=pharmacist,
+            )
+        assert exc.value.code == "return_exceeds_sold"
+
+    def test_a_sale_line_from_another_sale_is_refused(
+        self, confirmed_sale, product, warehouse, credit_customer, batch, pharmacist
+    ):
+        """
+        Guards the one input the client controls that could credit stock this
+        invoice never sold.
+        """
+        _sale, invoice = confirmed_sale
+        other_sale = create_sale(
+            customer=credit_customer,
+            warehouse=warehouse,
+            sale_type=SaleType.CREDIT,
+            lines=[{"product": product, "quantity": Decimal("5")}],
+            actor=pharmacist,
+        )
+        other, _other_invoice, _receipt = confirm_sale(other_sale, actor=pharmacist)
+        foreign_line = other.lines.first()
+
+        with pytest.raises(BusinessRuleViolation) as exc:
+            issue_credit_note_for_invoice(
+                invoice,
+                lines=[
+                    {
+                        "product": product,
+                        "description": "Retour",
+                        "quantity": Decimal("1"),
+                        "unit_price": foreign_line.unit_price,
+                        "sale_line": foreign_line.pk,
+                        "restock": True,
+                    }
+                ],
+                reason="Retour",
+                reason_code=CreditNoteReason.GOODS_RETURNED,
+                actor=pharmacist,
+            )
+        assert exc.value.code == "sale_line_mismatch"
+
+    def test_returned_goods_on_an_invoice_without_a_sale_stay_financial(
+        self, credit_customer, product, pharmacist
+    ):
+        """
+        A manually raised invoice has no batch allocations to restock into, so
+        the correction is money-only rather than an error.
+        """
+        from apps.invoicing.services import create_invoice, post_invoice
+
+        invoice = create_invoice(
+            customer=credit_customer,
+            lines=[
+                {
+                    "product": product,
+                    "description": "Vente directe",
+                    "quantity": Decimal("4"),
+                    "unit_price": Decimal("1000"),
+                }
+            ],
+            actor=pharmacist,
+        )
+        post_invoice(invoice, actor=pharmacist)
+
+        note = issue_credit_note_for_invoice(
+            invoice,
+            lines=[
+                {
+                    "product": product,
+                    "description": "Retour",
+                    "quantity": Decimal("2"),
+                    "unit_price": Decimal("1000"),
+                }
+            ],
+            reason="Retour sans vente rattachée",
+            reason_code=CreditNoteReason.GOODS_RETURNED,
+            actor=pharmacist,
+        )
+        assert note.invoice_type == InvoiceType.CREDIT_NOTE
+        assert note.credit_reason_code == CreditNoteReason.GOODS_RETURNED
 
 
 class TestReturns:

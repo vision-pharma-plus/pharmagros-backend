@@ -12,12 +12,16 @@ misuse; the chain makes deliberate tampering *detectable*.
 
 from django.db import migrations
 
+# The '%%' below is deliberate. It is a PL/pgSQL RAISE placeholder that must
+# reach the server as a single '%', but psycopg parses the statement for its
+# own parameter placeholders first and rejects a lone '%'. Doubling it escapes
+# it at that layer; the function body Postgres finally stores contains '%'.
 FORWARD = """
 CREATE OR REPLACE FUNCTION core_auditlog_block_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION
-        'core_auditlog is append-only: % is not permitted on audit records',
+        'core_auditlog is append-only: %% is not permitted on audit records',
         TG_OP
         USING ERRCODE = 'restrict_violation';
 END;

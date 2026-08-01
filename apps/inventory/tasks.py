@@ -53,6 +53,10 @@ def scan_expiry_horizons() -> dict:
     for horizon, lower_days in EXPIRY_BANDS:
         cutoff = today + timezone.timedelta(days=horizon)
         lower = today + timezone.timedelta(days=lower_days)
+        # Every batch in this band expires more than `lower_days` out, so a
+        # product only wants to hear about it here if its configured horizon
+        # reaches at least that far.
+        band_start_days = lower_days + 1
 
         batches = (
             StockBatch.objects.filter(
@@ -62,6 +66,16 @@ def scan_expiry_horizons() -> dict:
                 expiry_date__lte=cutoff,
                 deleted_at__isnull=True,
             )
+            # Respect the product's own alert horizon: a batch is only reported
+            # once it falls inside the window its product asks for. A fast mover
+            # set to 30 days stays quiet in the 180- and 90-day tiers and first
+            # appears at 30, instead of alerting six months out for stock that
+            # routinely clears in a fortnight.
+            #
+            # Compared as integer days rather than by shifting expiry_date by an
+            # F() interval: date ± F() arithmetic is not portable between the
+            # SQLite used in tests and the PostgreSQL used in production.
+            .filter(product__expiry_alert_days__gte=band_start_days)
             .select_related("product", "warehouse")
             .order_by("expiry_date")
         )

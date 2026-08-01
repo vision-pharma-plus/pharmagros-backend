@@ -7,7 +7,12 @@ FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    # Tolerate a slow or flaky connection. pip's default 15s read timeout
+    # aborts the whole build when a multi-megabyte wheel (fonttools, pillow)
+    # stalls mid-download, which is a network hiccup rather than a real
+    # failure — so wait longer and retry instead of failing the image.
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
 
 WORKDIR /build
 
@@ -17,7 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip wheel --wheel-dir /wheels -r requirements.txt
+
+# The cache mount keeps downloaded wheels between builds, so a retry after a
+# dropped connection resumes from what already arrived rather than re-fetching
+# every package. It lives in BuildKit's cache, not in the image, so nothing
+# here inflates the final size.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip wheel --wheel-dir /wheels -r requirements.txt
 
 
 # ---------------------------------------------------------------------------
@@ -30,11 +41,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     DJANGO_SETTINGS_MODULE=config.settings.prod
 
-# PDF rendering is pure Python (xhtml2pdf), so no Pango/Cairo stack is
-# needed. Locales are installed because invoices and reports must format
-# French dates and numbers correctly.
+# WeasyPrint renders PDFs through Pango/Cairo, so those shared libraries are
+# runtime dependencies, not build-time ones. Locales are installed because
+# invoices and reports must format French dates and numbers correctly.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libcairo2 \
+        libgdk-pixbuf-2.0-0 \
+        shared-mime-info \
         fonts-dejavu-core \
         gettext \
         locales \

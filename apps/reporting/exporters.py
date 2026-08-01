@@ -13,7 +13,7 @@ Two details that matter for this deployment:
     the spreadsheet without retyping.
 
 PDF is a third, non-negotiable format: it is what gets printed, signed and
-filed. It shares the invoice PDF engine (xhtml2pdf) and carries the company
+filed. It shares the invoice PDF engine (WeasyPrint) and carries the company
 logo, so an exported report is recognisably a company document.
 """
 
@@ -159,9 +159,16 @@ def to_pdf(
     title: str = "",
     metadata: dict | None = None,
 ) -> HttpResponse:
-    """Render rows to a printable PDF download carrying the company header."""
+    """
+    Render rows to a printable PDF download carrying the company header.
+
+    The template's `@page` footer and column headers are translated, so the
+    active language at render time decides the document's language — the same
+    contract the invoice renderer follows.
+    """
     from django.conf import settings
     from django.template.loader import render_to_string
+    from django.utils.translation import get_language
 
     from apps.invoicing.pdf import _html_to_pdf
 
@@ -171,6 +178,10 @@ def to_pdf(
             "title": title or filename,
             "company": settings.COMPANY,
             "generated_at": timezone.localtime().strftime("%d/%m/%Y %H:%M"),
+            # The template sets <html lang> and the footer from this; without
+            # it the attribute renders empty and WeasyPrint has no language to
+            # hand Pango for hyphenation.
+            "LANGUAGE_CODE": get_language() or "fr",
             "headers": [header for _key, header in columns],
             # Pre-flattened to a list of cells per row: the template engine
             # cannot index a dict by a loop variable.

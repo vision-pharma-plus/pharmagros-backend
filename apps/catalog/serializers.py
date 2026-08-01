@@ -61,6 +61,11 @@ class MedicineListSerializer(serializers.ModelSerializer):
     )
     unit_code = serializers.CharField(source="unit_of_measure.code", read_only=True)
     selling_price = MoneySerializerField(read_only=True)
+    # The catalogue reference cost, exposed so a purchase order line can offer
+    # it as a starting point for the supplier's quoted price. It is a default
+    # to be overwritten, never the cost the order is placed at — that is the
+    # buyer's to enter, and only the received batch cost values stock.
+    unit_cost = MoneySerializerField(read_only=True)
     display_name = serializers.CharField(read_only=True)
     # Included so the point-of-sale screen can preview a line total that
     # matches what the server will store. Without it the client had to assume
@@ -76,7 +81,7 @@ class MedicineListSerializer(serializers.ModelSerializer):
             "id", "product_code", "name", "name_fr", "name_en", "generic_name", "display_name",
             "strength", "strength_fr", "strength_en",
             "dosage_form", "category", "category_name", "manufacturer_name",
-            "unit_code", "selling_price", "status", "requires_prescription",
+            "unit_code", "selling_price", "unit_cost", "status", "requires_prescription",
             "is_controlled", "barcode", "effective_vat_rate", "batch_number", "expiry_date",
         ]
 

@@ -35,6 +35,7 @@ class NotificationCode(models.TextChoices):
     INVOICE_DUE = "INVOICE_DUE", _("Invoice due")
     INVOICE_OVERDUE = "INVOICE_OVERDUE", _("Invoice overdue")
     CREDIT_LIMIT_REACHED = "CREDIT_LIMIT_REACHED", _("Credit limit reached")
+    OBR_DECLARATION_FAILED = "OBR_DECLARATION_FAILED", _("OBR declaration failed")
     AUDIT_CHAIN_BROKEN = "AUDIT_CHAIN_BROKEN", _("Audit integrity failure")
     LICENCE_EXPIRING = "LICENCE_EXPIRING", _("Customer licence expiring")
     SYSTEM_ANNOUNCEMENT = "SYSTEM_ANNOUNCEMENT", _("System announcement")

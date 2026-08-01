@@ -15,10 +15,25 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
 from django.utils.translation import gettext_lazy as _
 from rest_framework import status
+from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
 logger = logging.getLogger(__name__)
+
+
+class ServiceUnavailable(APIException):
+    """
+    A dependency the server needs is not installed or reachable.
+
+    Lives here rather than in one app because more than one subsystem raises
+    it — invoicing and reporting both depend on the PDF engine, and a missing
+    native library is a deployment fault (503) rather than a bad request.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_code = "service_unavailable"
+    default_detail = _("A service this request depends on is unavailable.")
 
 
 class BusinessRuleViolation(Exception):

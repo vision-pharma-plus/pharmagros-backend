@@ -379,6 +379,10 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@pharmagros.bi")
 # ---------------------------------------------------------------------------
 COMPANY = {
     "NAME": env("COMPANY_NAME", default="VISION PHARMA PLUS"),
+    # Printed under the company name in the invoice masthead. Optional: the
+    # block is omitted entirely when this is blank, so an unset tagline
+    # leaves no gap rather than an empty line.
+    "TAGLINE": env("COMPANY_TAGLINE", default=""),
     "NIF": env("COMPANY_NIF", default="4001902867"),
     "RC": env("COMPANY_RC", default="35325/22"),
     "ADDRESS": env("COMPANY_ADDRESS", default="MUKAZA ; AVENUE DU COMMERCE"),
@@ -405,6 +409,58 @@ COMPANY = {
             "currency": env("COMPANY_BANK_2_CURRENCY", default="USD"),
         },
     ],
+}
+
+# ---------------------------------------------------------------------------
+# OBR electronic invoicing (EBMS)
+# ---------------------------------------------------------------------------
+# Disabled by default. Declaration only becomes possible once the OBR has
+# certified the installation and issued a SYSTEM_ID, so switching this on
+# before then would queue documents that can never be accepted. Every
+# deployment therefore opts in explicitly.
+OBR = {
+    "ENABLED": env.bool("OBR_ENABLED", default=False),
+    # The sandbox and production services are separate deployments with
+    # separate credentials. Keeping the base URL in configuration means a
+    # change of endpoint — which has happened before — needs no code release.
+    "BASE_URL": env("OBR_BASE_URL", default="https://ebms.obr.gov.bi:9443/ebms_api"),
+    "USERNAME": env("OBR_USERNAME", default=""),
+    "PASSWORD": env("OBR_PASSWORD", default=""),
+    # Issued by the OBR on certification; forms the second field of every
+    # fiscal signature. Without it, signatures cannot be built.
+    "SYSTEM_ID": env("OBR_SYSTEM_ID", default=""),
+    "PATHS": {
+        "login": env("OBR_PATH_LOGIN", default="login"),
+        "add_invoice": env("OBR_PATH_ADD_INVOICE", default="addInvoice"),
+        "cancel_invoice": env("OBR_PATH_CANCEL_INVOICE", default="cancelInvoice"),
+        "check_tin": env("OBR_PATH_CHECK_TIN", default="checkTIN"),
+    },
+    # A hung connection must not pin a Celery worker: connect and read
+    # timeouts are set separately because a slow response is ordinary on this
+    # link while a slow connect means the host is unreachable.
+    "CONNECT_TIMEOUT": env.float("OBR_CONNECT_TIMEOUT", default=10.0),
+    "READ_TIMEOUT": env.float("OBR_READ_TIMEOUT", default=30.0),
+    # After this many failed attempts a document stops being retried and is
+    # raised to a human. Retrying a permanently-rejected document forever
+    # would bury the real failures in noise.
+    "MAX_ATTEMPTS": env.int("OBR_MAX_ATTEMPTS", default=6),
+    # Documents dated before go-live are historical and are not declared.
+    "START_DATE": env("OBR_START_DATE", default=""),
+    "TAXPAYER": {
+        "TYPE": env.int("OBR_TAXPAYER_TYPE", default=2),  # 1 natural, 2 legal person
+        "VAT_SUBJECT": env.bool("OBR_VAT_SUBJECT", default=True),
+        "CONSUMPTION_TAX_SUBJECT": env.bool("OBR_CONSUMPTION_TAX_SUBJECT", default=False),
+        "WITHHOLDING_TAX_SUBJECT": env.bool("OBR_WITHHOLDING_TAX_SUBJECT", default=False),
+        "TRADE_REGISTER": env("OBR_TRADE_REGISTER", default=""),
+        # The OBR records an address as separate administrative divisions
+        # rather than one free-text line.
+        "PROVINCE": env("OBR_ADDRESS_PROVINCE", default=""),
+        "COMMUNE": env("OBR_ADDRESS_COMMUNE", default=""),
+        "QUARTIER": env("OBR_ADDRESS_QUARTIER", default=""),
+        "AVENUE": env("OBR_ADDRESS_AVENUE", default=""),
+        "RUE": env("OBR_ADDRESS_RUE", default=""),
+        "NUMBER": env("OBR_ADDRESS_NUMBER", default=""),
+    },
 }
 
 # ---------------------------------------------------------------------------

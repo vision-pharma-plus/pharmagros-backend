@@ -1,0 +1,37 @@
+# The virtualenv holds Windows-native binaries and is ~500MB. Copying it into
+# the image is slow and useless; worse, the dev compose file mounts this
+# directory over /app, so a .venv present here would shadow the container's
+# own correctly-built Linux packages — including the WeasyPrint binding that
+# this image exists to make work.
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local databases and secrets: the image must not bake these in. .env is
+# supplied at run time via env_file.
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Build outputs regenerated inside the image.
+staticfiles/
+media/
+
+# Developer scratch
+*.log
+setenv.bat
+docker-compose*.yml
+Dockerfile

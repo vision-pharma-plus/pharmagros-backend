@@ -207,7 +207,7 @@ def run() -> bool:
     # Institutional? No - PHARMACY is not institutional, so standard price.
     check("unit price = selling price", sale.lines.first().unit_price, Decimal("6000.0000"))
 
-    sale, invoice = confirm_sale(sale, actor=seller)
+    sale, invoice, _receipt = confirm_sale(sale, actor=seller)
     check("sale confirmed", sale.status, "CONFIRMED")
     check_true("invoice generated", invoice is not None)
     check("invoice posted", invoice.status, InvoiceStatus.POSTED)

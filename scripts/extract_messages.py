@@ -54,6 +54,22 @@ TEMPLATE_BLOCKTRANS = re.compile(
 )
 
 
+BLOCKTRANS_VAR = re.compile(r"{{\s*(\w+)\s*}}")
+
+
+def _normalise_blocktrans(body: str) -> str:
+    """
+    Turn a blocktrans body into the msgid Django will actually look up.
+
+    At render time Django rewrites `{{ name }}` to gettext's `%(name)s` and
+    collapses the surrounding whitespace before consulting the catalogue. An
+    extractor that stores the raw body instead produces a msgid that can never
+    match, so the string stays untranslated however carefully it is translated.
+    """
+    text = BLOCKTRANS_VAR.sub(r"%(\1)s", body)
+    return " ".join(text.split())
+
+
 class Message:
     """One translatable string and where it was found."""
 
@@ -153,8 +169,8 @@ def _extract_from_template(path: Path, messages: OrderedDict[str, Message]) -> N
         message.locations.append((relative, line))
 
     for match in TEMPLATE_BLOCKTRANS.finditer(source):
-        text = match.group(1).strip()
-        if not text.strip():
+        text = _normalise_blocktrans(match.group(1))
+        if not text:
             continue
         line = source.count("\n", 0, match.start()) + 1
         message = messages.setdefault(text, Message(text))
