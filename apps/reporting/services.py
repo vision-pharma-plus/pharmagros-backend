@@ -14,6 +14,7 @@ report revenue that does not exist.
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 from django.db.models import Count, DecimalField, F, Sum, Value
@@ -24,6 +25,24 @@ from apps.core.money import q_internal
 
 ZERO = Decimal("0")
 _MONEY = DecimalField(max_digits=18, decimal_places=4)
+
+
+def _end_of_day(value):
+    """
+    Widen a bare date used as an inclusive upper bound to the end of that day.
+
+    The report filters compare against DateTimeFields. A plain `date` is
+    interpreted as midnight, so `sale_date__lte=2026-08-02` silently excludes
+    everything that happened *during* the 2nd — which is every sale made today.
+    Anything already carrying a time is left alone.
+    """
+    if isinstance(value, dt.datetime) or not isinstance(value, dt.date):
+        return value
+
+    end = dt.datetime.combine(value, dt.time.max)
+    if timezone.is_naive(end) and timezone.get_current_timezone() is not None:
+        end = timezone.make_aware(end)
+    return end
 
 
 def _money_sum(field: str):
@@ -328,7 +347,7 @@ def stock_movement_report(*, date_from=None, date_to=None, product=None, warehou
     if date_from:
         movements = movements.filter(performed_at__gte=date_from)
     if date_to:
-        movements = movements.filter(performed_at__lte=date_to)
+        movements = movements.filter(performed_at__lte=_end_of_day(date_to))
     if product:
         movements = movements.filter(product=product)
     if warehouse:
@@ -420,7 +439,8 @@ def sales_report(*, date_from, date_to, group_by: str = "day", customer=None, us
 
     sales = (
         Sale.objects.filter(
-            sale_date__gte=date_from, sale_date__lte=date_to, deleted_at__isnull=True,
+            sale_date__gte=date_from, sale_date__lte=_end_of_day(date_to),
+            deleted_at__isnull=True,
         )
         .exclude(status__in=[SaleStatus.DRAFT, SaleStatus.CANCELLED])
     )
@@ -563,7 +583,8 @@ def profit_and_loss(*, date_from, date_to) -> dict:
 
     sales = (
         Sale.objects.filter(
-            sale_date__gte=date_from, sale_date__lte=date_to, deleted_at__isnull=True,
+            sale_date__gte=date_from, sale_date__lte=_end_of_day(date_to),
+            deleted_at__isnull=True,
         )
         .exclude(status__in=[SaleStatus.DRAFT, SaleStatus.CANCELLED])
         .aggregate(

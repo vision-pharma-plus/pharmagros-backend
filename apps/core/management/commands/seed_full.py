@@ -115,6 +115,9 @@ class Command(BaseCommand):
         pending_po = self._pending_order(
             suppliers[1], warehouse, medicines, users["inventory"], admin
         )
+        self._slow_moving_order(
+            suppliers[0], warehouse, medicines, users["inventory"], admin
+        )
 
         self.stdout.write("Seeding cash sales (receipts)...")
         receipts = self._cash_sales(customers[0], warehouse, medicines, users["cashier"])
@@ -682,8 +685,11 @@ class Command(BaseCommand):
                 {
                     "product": medicines[0], "quantity_ordered": D("120"),
                     "unit_cost": D("4500"),
-                    "expected_expiry_date": self.today + timedelta(days=540),
-                    "notes": "Palette complete, rotation rapide.",
+                    # Accepted short-dated: the minimum is set to the date the
+                    # supplier could actually deliver. receive_goods refuses a
+                    # batch expiring before this, so the two must agree.
+                    "expected_expiry_date": self.today + timedelta(days=90),
+                    "notes": "Lot court date accepte, rotation rapide.",
                 },
                 {
                     "product": medicines[1], "quantity_ordered": D("80"),
@@ -720,13 +726,19 @@ class Command(BaseCommand):
         purchasing_services.mark_sent(order, actor=actor)
 
         order.refresh_from_db()
+        # Expiry horizons are deliberately mixed. Most batches sit comfortably
+        # in date, but the first is inside the 180-day alert window so the
+        # expiry report and the expiry-scanning task have something real to
+        # find — an all-healthy catalogue exercises neither.
+        short_dated = {0: 95}
         receipt_lines = []
         for index, line in enumerate(order.lines.all().order_by("line_number")):
+            days = short_dated.get(index, 540 + index * 45)
             receipt_lines.append(
                 {
                     "purchase_order_line": line,
                     "batch_number": f"LOT-2026-{index + 1:03d}",
-                    "expiry_date": self.today + timedelta(days=540 + index * 45),
+                    "expiry_date": self.today + timedelta(days=days),
                     "manufacturing_date": self.today - timedelta(days=120),
                     "quantity_received": line.quantity_ordered,
                     "unit_cost": line.unit_cost,
@@ -740,6 +752,70 @@ class Command(BaseCommand):
             receipt_date=self.now - timedelta(days=2),
             quality_checked=True,
             quality_notes="Chaine du froid respectee, emballages conformes.",
+            actor=actor,
+        )
+        order.refresh_from_db()
+        return order
+
+    def _slow_moving_order(self, supplier, warehouse, medicines, actor, approver):
+        """
+        An old delivery that has never sold: the dead-stock case.
+
+        The receipt is backdated beyond the 180-day no-movement window the
+        dead-stock report uses, and nothing below sells these lines. Without
+        it that report is permanently empty and the screen looks broken rather
+        than healthy.
+        """
+        order = purchasing_services.create_order(
+            supplier=supplier,
+            warehouse=warehouse,
+            lines=[
+                {
+                    "product": medicines[8], "quantity_ordered": D("40"),
+                    "unit_cost": D("5100"),
+                    "expected_expiry_date": self.today + timedelta(days=300),
+                    "notes": "Sirop antitussif, rotation lente.",
+                },
+                {
+                    "product": medicines[9], "quantity_ordered": D("35"),
+                    "unit_cost": D("4100"),
+                    "expected_expiry_date": self.today + timedelta(days=330),
+                    "notes": "Pommade antifongique, rotation lente.",
+                },
+            ],
+            expected_delivery_date=self.today - timedelta(days=220),
+            freight_cost=D("40000"),
+            customs_duty=D("20000"),
+            other_charges=D("8000"),
+            supplier_reference="PK-2025-0912",
+            notes="Ancien reassort, sans rotation depuis la livraison.",
+            actor=actor,
+        )
+        purchasing_services.submit_for_approval(order, actor=actor)
+        purchasing_services.approve_order(
+            order, actor=approver, notes="Approuve lors du precedent exercice."
+        )
+        purchasing_services.mark_sent(order, actor=actor)
+
+        order.refresh_from_db()
+        received_at = self.now - timedelta(days=210)
+        purchasing_services.receive_goods(
+            order,
+            lines=[
+                {
+                    "purchase_order_line": line,
+                    "batch_number": f"LOT-2025-{index + 1:03d}",
+                    "expiry_date": self.today + timedelta(days=300 + index * 30),
+                    "manufacturing_date": self.today - timedelta(days=400),
+                    "quantity_received": line.quantity_ordered,
+                    "unit_cost": line.unit_cost,
+                }
+                for index, line in enumerate(order.lines.all().order_by("line_number"))
+            ],
+            delivery_note_number="BL-2025-0431",
+            receipt_date=received_at,
+            quality_checked=True,
+            quality_notes="Conforme a la reception.",
             actor=actor,
         )
         order.refresh_from_db()
