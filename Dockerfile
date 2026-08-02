@@ -23,16 +23,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-# The cache mount keeps downloaded wheels between builds, so a retry after a
-# dropped connection resumes from what already arrived rather than re-fetching
-# every package. It lives in BuildKit's cache, not in the image, so nothing
-# here inflates the final size.
-#
-# The explicit `id` is required: Railway's Metal builder rejects a cache mount
-# without one ("missing an id argument"), where stock BuildKit defaults it to
-# the target path. Naming it keeps the same cache on both.
-RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
-    pip wheel --wheel-dir /wheels -r requirements.txt
+# No BuildKit cache mount here. It would keep downloaded wheels between builds,
+# but Railway's Metal builder rejects the syntax both ways: without an `id` it
+# reports "missing an id argument", and with a plain one it demands an
+# undocumented cacheKey prefix. The mount is only a build-speed optimisation,
+# so it is not worth a Dockerfile that only builds on one platform. Layer
+# caching still skips this step entirely whenever requirements.txt is unchanged.
+RUN pip wheel --wheel-dir /wheels -r requirements.txt
 
 
 # ---------------------------------------------------------------------------
