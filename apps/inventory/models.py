@@ -29,6 +29,7 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.core.fields import MoneyField, QuantityField
 from apps.core.models import BaseModel, TimeStampedModel
+from apps.core.money import q_document
 
 
 class Warehouse(BaseModel):
@@ -202,7 +203,24 @@ class StockBatch(BaseModel):
 
     @property
     def stock_value(self) -> Decimal:
-        return self.quantity_remaining * self.landed_unit_cost
+        """
+        What this batch is worth, at landed cost.
+
+        The single definition of batch value: the valuation report, the expiry
+        report, the dead-stock report and `inventory_valuation` all resolve to
+        this, so a figure cannot differ between the screen that itemises it and
+        the screen that totals it.
+
+        The unit cost is rounded to whole francs *before* multiplying, because
+        that is the figure every report prints. `landed_unit_cost` keeps four
+        decimals — freight and duty spread over the units rarely divide evenly
+        — and valuing at the unrounded figure broke the one check a reader can
+        make by hand: 35 units at a printed 4 902 must read 171 570, not the
+        171 581 the stored 4 902.3022 produces. Rounding at the boundary keeps
+        the residual inside the unit cost, which is an average, rather than in
+        a total that is supposed to tie out.
+        """
+        return q_document(self.quantity_remaining * q_document(self.landed_unit_cost))
 
     def is_issuable(self) -> bool:
         """Whether FIFO may allocate from this batch."""

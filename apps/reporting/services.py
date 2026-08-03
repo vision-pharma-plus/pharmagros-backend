@@ -21,7 +21,7 @@ from django.db.models import Count, DecimalField, F, Sum, Value
 from django.db.models.functions import Coalesce, TruncDate, TruncMonth
 from django.utils import timezone
 
-from apps.core.money import q_internal
+from apps.core.money import q_document, q_internal
 
 ZERO = Decimal("0")
 _MONEY = DecimalField(max_digits=18, decimal_places=4)
@@ -55,8 +55,24 @@ def _money_sum(field: str):
 # ---------------------------------------------------------------------------
 
 
-def dashboard_kpis(*, warehouse=None) -> dict:
-    """Headline figures for the executive dashboard."""
+def dashboard_kpis(*, warehouse=None, date_from=None, date_to=None) -> dict:
+    """
+    Headline figures for the executive dashboard.
+
+    `date_from`/`date_to` bound the *sales* figures — the only part of the
+    dashboard that is a flow rather than a balance. Stock levels, expiry counts
+    and receivables are positions as at now: filtering them by a past range
+    would report a stock level the warehouse does not hold, so they deliberately
+    ignore the range and the response labels them `as_of` instead.
+
+    With no range given the tiles keep their original meaning — today, and the
+    calendar month to date — so an unfiltered dashboard is unchanged.
+
+    The bounds are inclusive dates. `date_to` is widened to the end of its day
+    by `_end_of_day` for the same reason as every other report here: comparing a
+    DateTimeField against a bare date means midnight, which drops the whole
+    final day.
+    """
     from apps.catalog.models import Medicine, ProductStatus
     from apps.inventory.models import BatchStatus, StockBatch
     from apps.invoicing.models import Invoice, InvoiceStatus
@@ -65,15 +81,27 @@ def dashboard_kpis(*, warehouse=None) -> dict:
     today = timezone.localdate()
     month_start = today.replace(day=1)
 
+    # A range collapses the two sales windows onto the same period: with an
+    # explicit filter "daily" and "monthly" no longer mean anything, so both
+    # report the selected range and the frontend labels them accordingly.
+    period_start = date_from or month_start
+    period_end = date_to or today
+    daily_start = date_from or today
+    daily_end = date_to or today
+
     batches = StockBatch.objects.filter(
         status=BatchStatus.ACTIVE, quantity_remaining__gt=ZERO, deleted_at__isnull=True,
     )
     if warehouse:
         batches = batches.filter(warehouse=warehouse)
 
+    # Valued per batch at the printed unit cost, matching the valuation report
+    # this tile links to. See `StockBatch.stock_value`.
     inventory_value = ZERO
     for row in batches.values("quantity_remaining", "landed_unit_cost"):
-        inventory_value += row["quantity_remaining"] * row["landed_unit_cost"]
+        inventory_value += q_document(
+            row["quantity_remaining"] * q_document(row["landed_unit_cost"])
+        )
 
     # Sellable stock per product: excludes expired and reserved units, so a
     # product sitting on expired stock correctly reads as out of stock.
@@ -105,12 +133,24 @@ def dashboard_kpis(*, warehouse=None) -> dict:
         deleted_at__isnull=True,
     ).exclude(status__in=[SaleStatus.DRAFT, SaleStatus.CANCELLED])
 
-    daily = confirmed_sales.filter(sale_date__date=today).aggregate(
-        total=_money_sum("total_amount"), cost=_money_sum("total_cost"), count=Count("id"),
-    )
-    monthly = confirmed_sales.filter(sale_date__date__gte=month_start).aggregate(
-        total=_money_sum("total_amount"), cost=_money_sum("total_cost"), count=Count("id"),
-    )
+    # VAT is collected on behalf of the state, so it is not revenue and must
+    # come out before cost to give margin. This mirrors `Sale.gross_margin`,
+    # `sales_report` and `profit_and_loss` — the dashboard previously omitted
+    # the step and overstated margin by the whole VAT amount.
+    def _window(start, end):
+        rows = confirmed_sales.filter(
+            sale_date__gte=start, sale_date__lte=_end_of_day(end),
+        ).aggregate(
+            total=_money_sum("total_amount"),
+            tax=_money_sum("tax_amount"),
+            cost=_money_sum("total_cost"),
+            count=Count("id"),
+        )
+        rows["margin"] = (rows["total"] - rows["tax"]) - rows["cost"]
+        return rows
+
+    daily = _window(daily_start, daily_end)
+    monthly = _window(period_start, period_end)
 
     open_invoices = Invoice.objects.filter(
         status__in=[InvoiceStatus.POSTED, InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.OVERDUE],
@@ -125,7 +165,8 @@ def dashboard_kpis(*, warehouse=None) -> dict:
 
     return {
         "inventory": {
-            "total_value": q_internal(inventory_value),
+            # Whole francs, matching the valuation report this tile drills into.
+            "total_value": q_document(inventory_value),
             "total_products": active_products.count(),
             "total_batches": batches.count(),
             "low_stock_products": low_stock,
@@ -136,10 +177,15 @@ def dashboard_kpis(*, warehouse=None) -> dict:
         "sales": {
             "daily_revenue": q_internal(daily["total"]),
             "daily_transactions": daily["count"],
-            "daily_margin": q_internal(daily["total"] - daily["cost"]),
+            "daily_margin": q_internal(daily["margin"]),
             "monthly_revenue": q_internal(monthly["total"]),
             "monthly_transactions": monthly["count"],
-            "monthly_margin": q_internal(monthly["total"] - monthly["cost"]),
+            "monthly_margin": q_internal(monthly["margin"]),
+            # Echoed so the tiles can label the window they actually cover, and
+            # so a filtered dashboard cannot silently read as "today".
+            "period_start": period_start,
+            "period_end": period_end,
+            "is_filtered": bool(date_from or date_to),
         },
         "receivables": {
             "outstanding_total": q_internal(receivables["total"]),
@@ -152,18 +198,34 @@ def dashboard_kpis(*, warehouse=None) -> dict:
     }
 
 
-def revenue_trend(*, days: int = 30) -> list[dict]:
+def _sales_window(date_from=None, date_to=None, days: int = 30):
+    """
+    Resolve a widget's date window to a concrete (start, inclusive-end) pair.
+
+    An explicit range wins; otherwise the window is the trailing `days`. Keeping
+    this in one place is what stops the KPI tiles and the charts below them from
+    quietly covering different periods.
+    """
+    end = date_to or timezone.localdate()
+    start = date_from or (end - timezone.timedelta(days=days))
+    return start, _end_of_day(end)
+
+
+def revenue_trend(*, days: int = 30, date_from=None, date_to=None) -> list[dict]:
     """Daily revenue and margin for the trend chart."""
     from apps.sales.models import Sale, SaleStatus
 
-    start = timezone.localdate() - timezone.timedelta(days=days)
+    start, end = _sales_window(date_from, date_to, days)
     rows = (
-        Sale.objects.filter(sale_date__date__gte=start, deleted_at__isnull=True)
+        Sale.objects.filter(
+            sale_date__gte=start, sale_date__lte=end, deleted_at__isnull=True,
+        )
         .exclude(status__in=[SaleStatus.DRAFT, SaleStatus.CANCELLED])
         .annotate(day=TruncDate("sale_date"))
         .values("day")
         .annotate(
             revenue=_money_sum("total_amount"),
+            tax=_money_sum("tax_amount"),
             cost=_money_sum("total_cost"),
             transactions=Count("id"),
         )
@@ -174,19 +236,22 @@ def revenue_trend(*, days: int = 30) -> list[dict]:
             "date": row["day"],
             "revenue": q_internal(row["revenue"]),
             "cost": q_internal(row["cost"]),
-            "margin": q_internal(row["revenue"] - row["cost"]),
+            # Net of VAT before cost, as everywhere else margin is computed.
+            "margin": q_internal((row["revenue"] - row["tax"]) - row["cost"]),
             "transactions": row["transactions"],
         }
         for row in rows
     ]
 
 
-def top_customers(*, limit: int = 10, days: int = 30) -> list[dict]:
+def top_customers(*, limit: int = 10, days: int = 30, date_from=None, date_to=None) -> list[dict]:
     from apps.sales.models import Sale, SaleStatus
 
-    start = timezone.localdate() - timezone.timedelta(days=days)
+    start, end = _sales_window(date_from, date_to, days)
     rows = (
-        Sale.objects.filter(sale_date__date__gte=start, deleted_at__isnull=True)
+        Sale.objects.filter(
+            sale_date__gte=start, sale_date__lte=end, deleted_at__isnull=True,
+        )
         .exclude(status__in=[SaleStatus.DRAFT, SaleStatus.CANCELLED])
         .values("customer__id", "customer__customer_code", "customer__business_name")
         .annotate(revenue=_money_sum("total_amount"), transactions=Count("id"))
@@ -204,12 +269,16 @@ def top_customers(*, limit: int = 10, days: int = 30) -> list[dict]:
     ]
 
 
-def top_products(*, limit: int = 10, days: int = 30) -> list[dict]:
+def top_products(*, limit: int = 10, days: int = 30, date_from=None, date_to=None) -> list[dict]:
     from apps.sales.models import SaleLine, SaleStatus
 
-    start = timezone.localdate() - timezone.timedelta(days=days)
+    start, end = _sales_window(date_from, date_to, days)
     rows = (
-        SaleLine.objects.filter(sale__sale_date__date__gte=start, sale__deleted_at__isnull=True)
+        SaleLine.objects.filter(
+            sale__sale_date__gte=start,
+            sale__sale_date__lte=end,
+            sale__deleted_at__isnull=True,
+        )
         .exclude(sale__status__in=[SaleStatus.DRAFT, SaleStatus.CANCELLED])
         .values("product__id", "product__product_code", "product__name_fr")
         .annotate(
@@ -256,7 +325,12 @@ def inventory_valuation_report(*, warehouse=None, category=None) -> dict:
 
     lines, total_value, total_units = [], ZERO, ZERO
     for batch in batches.iterator(chunk_size=500):
-        value = q_internal(batch.quantity_remaining * batch.landed_unit_cost)
+        # `StockBatch.stock_value` is the one definition of batch value; see
+        # it for why the unit cost is rounded before multiplying. The unit cost
+        # is rounded the same way here so the printed line reconciles:
+        # quantity x unit cost must equal the value beside it.
+        unit_cost = q_document(batch.landed_unit_cost)
+        value = batch.stock_value
         total_value += value
         total_units += batch.quantity_remaining
         lines.append(
@@ -269,14 +343,16 @@ def inventory_valuation_report(*, warehouse=None, category=None) -> dict:
                 "expiry_date": batch.expiry_date,
                 "days_to_expiry": batch.days_to_expiry,
                 "quantity": batch.quantity_remaining,
-                "unit_cost": batch.landed_unit_cost,
+                "unit_cost": unit_cost,
                 "value": value,
             }
         )
 
     return {
         "lines": lines,
-        "total_value": q_internal(total_value),
+        # The grand total is the sum of the printed line values, so the column
+        # adds up to the footer exactly as a reader would total it by hand.
+        "total_value": q_document(total_value),
         "total_units": q_internal(total_units),
         "batch_count": len(lines),
         "generated_at": timezone.now(),
@@ -306,7 +382,9 @@ def expiry_report(*, days: int = 180, warehouse=None) -> dict:
 
     lines, value_at_risk, already_expired = [], ZERO, ZERO
     for batch in batches.iterator(chunk_size=500):
-        value = q_internal(batch.quantity_remaining * batch.landed_unit_cost)
+        # Same rule as the valuation report: see `StockBatch.stock_value`.
+        unit_cost = q_document(batch.landed_unit_cost)
+        value = batch.stock_value
         value_at_risk += value
         if batch.expiry_date < today:
             already_expired += value
@@ -320,7 +398,7 @@ def expiry_report(*, days: int = 180, warehouse=None) -> dict:
                 "expiry_date": batch.expiry_date,
                 "days_to_expiry": batch.days_to_expiry,
                 "quantity": batch.quantity_remaining,
-                "unit_cost": batch.landed_unit_cost,
+                "unit_cost": unit_cost,
                 "value_at_risk": value,
                 "is_expired": batch.expiry_date < today,
             }
@@ -329,8 +407,8 @@ def expiry_report(*, days: int = 180, warehouse=None) -> dict:
     return {
         "lines": lines,
         "horizon_days": days,
-        "total_value_at_risk": q_internal(value_at_risk),
-        "already_expired_value": q_internal(already_expired),
+        "total_value_at_risk": q_document(value_at_risk),
+        "already_expired_value": q_document(already_expired),
         "batch_count": len(lines),
         "generated_at": timezone.now(),
         "currency": "BIF",
@@ -405,7 +483,8 @@ def dead_stock_report(*, days_without_movement: int = 180, warehouse=None) -> di
 
     lines, total_value = [], ZERO
     for batch in batches.iterator(chunk_size=500):
-        value = q_internal(batch.quantity_remaining * batch.landed_unit_cost)
+        # See `StockBatch.stock_value` for why this rounds before valuing.
+        value = batch.stock_value
         total_value += value
         lines.append(
             {

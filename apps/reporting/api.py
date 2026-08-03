@@ -99,14 +99,31 @@ class DashboardView(_ReportView):
     required_permissions = "reporting.view_dashboard"
     report_name = "dashboard"
 
-    @extend_schema(tags=["reporting"], summary="Dashboard KPIs", responses={200: DashboardSerializer})
+    @extend_schema(
+        tags=["reporting"], summary="Dashboard KPIs", responses={200: DashboardSerializer},
+        parameters=[
+            OpenApiParameter("warehouse", str),
+            OpenApiParameter(
+                "date_from", str,
+                description="Start of the sales window (inclusive). Defaults to the 1st of the current month.",
+            ),
+            OpenApiParameter(
+                "date_to", str,
+                description="End of the sales window (inclusive). Defaults to today.",
+            ),
+        ],
+    )
     def get(self, request):
         from apps.inventory.models import Warehouse
 
         warehouse_id = request.query_params.get("warehouse")
         warehouse = get_object_or_404(Warehouse, pk=warehouse_id) if warehouse_id else None
 
-        kpis = services.dashboard_kpis(warehouse=warehouse)
+        kpis = services.dashboard_kpis(
+            warehouse=warehouse,
+            date_from=_parse_date(request.query_params.get("date_from")),
+            date_to=_parse_date(request.query_params.get("date_to")),
+        )
 
         # Margin figures are commercially sensitive; only users with the
         # explicit permission see them.
@@ -125,15 +142,25 @@ class DashboardWidgetsView(_ReportView):
 
     @extend_schema(
         tags=["reporting"], summary="Dashboard widget data", responses={200: DashboardWidgetsSerializer},
-        parameters=[OpenApiParameter("days", int, description="Trend window, default 30")],
+        parameters=[
+            OpenApiParameter("days", int, description="Trend window, default 30. Ignored when date_from/date_to are given."),
+            OpenApiParameter("date_from", str, description="Start of the window (inclusive)."),
+            OpenApiParameter("date_to", str, description="End of the window (inclusive)."),
+        ],
     )
     def get(self, request):
         days = int(request.query_params.get("days", 30))
+        # Same window as the KPI tiles above them, so the chart and the
+        # top-N tables reconcile with the numbers the user just filtered.
+        window = {
+            "date_from": _parse_date(request.query_params.get("date_from")),
+            "date_to": _parse_date(request.query_params.get("date_to")),
+        }
         return Response(
             {
-                "revenue_trend": services.revenue_trend(days=days),
-                "top_customers": services.top_customers(days=days),
-                "top_products": services.top_products(days=days),
+                "revenue_trend": services.revenue_trend(days=days, **window),
+                "top_customers": services.top_customers(days=days, **window),
+                "top_products": services.top_products(days=days, **window),
             }
         )
 

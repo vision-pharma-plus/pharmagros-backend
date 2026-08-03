@@ -80,8 +80,8 @@ def render_receipt_pdf(receipt, *, language: str | None = None) -> bytes:
                     "quantity": line.quantity,
                     "unit_of_measure": line.product.unit_of_measure.code,
                     "discount_percent": line.discount_percent,
-                    "unit_price_display": format_bif(unit_price_ttc),
-                    "line_total_display": format_bif(line.line_total),
+                    "unit_price_display": format_bif(unit_price_ttc, locale=language),
+                    "line_total_display": format_bif(line.line_total, locale=language),
                     "batches": batches,
                 }
             )
@@ -104,12 +104,12 @@ def render_receipt_pdf(receipt, *, language: str | None = None) -> bytes:
             "invoice": invoice,
             "LANGUAGE_CODE": language,
             "totals": {
-                "subtotal": format_bif(sale.subtotal),
-                "discount": format_bif(sale.discount_amount),
-                "tax": format_bif(sale.tax_amount),
-                "total": format_bif(sale.total_amount),
-                "tendered": format_bif(receipt.amount_tendered),
-                "change": format_bif(receipt.change_given),
+                "subtotal": format_bif(sale.subtotal, locale=language),
+                "discount": format_bif(sale.discount_amount, locale=language),
+                "tax": format_bif(sale.tax_amount, locale=language),
+                "total": format_bif(sale.total_amount, locale=language),
+                "tendered": format_bif(receipt.amount_tendered, locale=language),
+                "change": format_bif(receipt.change_given, locale=language),
             },
             # Rounded to the franc for the words line, matching the printed
             # total rather than the internal 4 dp figure behind it.

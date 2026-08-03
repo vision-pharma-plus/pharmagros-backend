@@ -28,6 +28,11 @@ class SalesKPISerializer(serializers.Serializer):
     monthly_revenue = MoneySerializerField()
     monthly_transactions = serializers.IntegerField()
     monthly_margin = MoneySerializerField(required=False)
+    # The window the figures above actually cover. Present so a filtered
+    # dashboard can label its tiles instead of still reading "today".
+    period_start = serializers.DateField()
+    period_end = serializers.DateField()
+    is_filtered = serializers.BooleanField()
 
 
 class ReceivablesKPISerializer(serializers.Serializer):

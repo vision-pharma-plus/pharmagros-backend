@@ -179,12 +179,15 @@ def _tax_class(rate) -> str:
     return TAX_CLASS_ZERO
 
 
-def _tax_summary(invoice) -> dict:
+def _tax_summary(invoice, *, language: str = "fr") -> dict:
     """
     Total the invoice by tax class for the OBR summary band.
 
     Bases are accumulated per class so the printed band adds up to the
     invoice total — a mismatch there is what an inspection looks for.
+
+    `language` decides the separators, so the summary band is grouped the same
+    way as the line totals above it on the same page.
     """
     bases = {TAX_CLASS_EXEMPT: Decimal(0), TAX_CLASS_STANDARD: Decimal(0), TAX_CLASS_ZERO: Decimal(0)}
     tax_b = Decimal(0)
@@ -196,12 +199,12 @@ def _tax_summary(invoice) -> dict:
             tax_b += Decimal(line.tax_amount or 0)
 
     return {
-        "base_a": format_bif(bases[TAX_CLASS_EXEMPT]),
-        "base_b": format_bif(bases[TAX_CLASS_STANDARD]),
-        "base_c": format_bif(bases[TAX_CLASS_ZERO]),
-        "tax_b": format_bif(tax_b),
-        "tax_total": format_bif(invoice.tax_amount),
-        "total": format_bif(invoice.total_amount),
+        "base_a": format_bif(bases[TAX_CLASS_EXEMPT], locale=language),
+        "base_b": format_bif(bases[TAX_CLASS_STANDARD], locale=language),
+        "base_c": format_bif(bases[TAX_CLASS_ZERO], locale=language),
+        "tax_b": format_bif(tax_b, locale=language),
+        "tax_total": format_bif(invoice.tax_amount, locale=language),
+        "total": format_bif(invoice.total_amount, locale=language),
     }
 
 
@@ -245,13 +248,13 @@ def render_invoice_pdf(invoice, *, language: str | None = None) -> bytes:
                     # matching TOTAL A/B/C column in the summary band below,
                     # which is the reconciliation an inspection performs.
                     "tax_class": _tax_class(line.tax_rate),
-                    "unit_price_display": format_bif(line.unit_price),
-                    "unit_price_ttc_display": format_bif(unit_price_ttc),
-                    "line_total_display": format_bif(line.line_total),
+                    "unit_price_display": format_bif(line.unit_price, locale=language),
+                    "unit_price_ttc_display": format_bif(unit_price_ttc, locale=language),
+                    "line_total_display": format_bif(line.line_total, locale=language),
                 }
             )
 
-        tax_summary = _tax_summary(invoice)
+        tax_summary = _tax_summary(invoice, language=language)
 
         # The customer block is snapshotted onto the invoice at posting time,
         # but sector lives on the customer record, so it is read live.
@@ -272,19 +275,59 @@ def render_invoice_pdf(invoice, *, language: str | None = None) -> bytes:
             "cashier": cashier,
             "LANGUAGE_CODE": language,
             "totals": {
-                "subtotal": format_bif(invoice.subtotal),
-                "discount": format_bif(invoice.discount_amount),
-                "taxable": format_bif(invoice.taxable_amount),
-                "tax": format_bif(invoice.tax_amount),
-                "total": format_bif(invoice.total_amount),
-                "paid": format_bif(invoice.paid_amount),
-                "due": format_bif(invoice.balance_due),
+                "subtotal": format_bif(invoice.subtotal, locale=language),
+                "discount": format_bif(invoice.discount_amount, locale=language),
+                "taxable": format_bif(invoice.taxable_amount, locale=language),
+                "tax": format_bif(invoice.tax_amount, locale=language),
+                "total": format_bif(invoice.total_amount, locale=language),
+                "paid": format_bif(invoice.paid_amount, locale=language),
+                "due": format_bif(invoice.balance_due, locale=language),
             },
             "amount_in_words": amount_in_words(invoice.total_amount, language),
             "tax_summary": tax_summary,
         }
 
         html = render_to_string("pdf/invoice.html", context)
+
+    return _html_to_pdf(html)
+
+
+def render_payment_receipt_pdf(receipt, *, language: str | None = None) -> bytes:
+    """
+    Render a payment receipt to PDF bytes.
+
+    A4 rather than the 80 mm till roll used by `sales.pdf.render_receipt_pdf`:
+    this acknowledges settlement of a credit invoice, so it is filed with the
+    invoice by an accounts department rather than handed across a counter.
+
+    Amounts are read from the invoice through the receipt's properties, so the
+    document cannot state a total that disagrees with the invoice it settles.
+    """
+    language = language or "fr"
+    invoice = receipt.invoice
+
+    with translation.override(language):
+        payment = receipt.settling_payment
+        context = {
+            "receipt": receipt,
+            "invoice": invoice,
+            "company": settings.COMPANY,
+            "LANGUAGE_CODE": language,
+            "payment_method": payment.get_method_display() if payment else "",
+            "payment_reference": payment.bank_reference if payment else "",
+            "amounts": {
+                "invoice_total": format_bif(receipt.invoice_total, locale=language),
+                "amount_paid": format_bif(receipt.amount_paid, locale=language),
+                "balance": format_bif(invoice.balance_due, locale=language),
+            },
+            "amount_in_words": amount_in_words(receipt.amount_paid, language),
+            "issued_by": (
+                receipt.issued_by.get_full_name() or receipt.issued_by.email
+                if receipt.issued_by
+                else ""
+            ),
+        }
+        html = render_to_string("pdf/payment_receipt.html", context)
 
     return _html_to_pdf(html)
 

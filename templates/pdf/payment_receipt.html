@@ -1,0 +1,237 @@
+{% load i18n l10n %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}">
+<head>
+  <meta charset="utf-8">
+  {# Company name included for the same reason as on the invoice: this becomes the suggested filename, and a bare document number identifies nothing in a downloads folder. #}
+  <title>{{ receipt.receipt_number }} {{ company.NAME }}</title>
+  <style>
+    /* A4, not the 80 mm roll the counter receipt uses: this document is filed
+       with the invoice it settles rather than handed across a counter. */
+    @page {
+      size: A4 portrait;
+      margin: 14mm 14mm 18mm 14mm;
+
+      @bottom-center {
+        content: "{{ company.NAME }} · {{ receipt.issued_at|date:'d/m/Y H:i:s' }} · {% trans "Page" %} " counter(page) " {% trans "of" %} " counter(pages);
+        font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+        font-size: 6pt;
+        color: #555;
+        border-top: 0.4pt solid #999;
+        padding-top: 2mm;
+      }
+    }
+
+    body {
+      font-family: "DejaVu Sans", Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      color: #000;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .header { display: flex; align-items: flex-start; }
+    .header .identity { flex: 1 1 60%; }
+    .header .meta { flex: 0 0 36%; text-align: right; }
+
+    .company-name { font-size: 13pt; font-weight: bold; }
+    .company-info { font-size: 7.5pt; color: #333; margin-top: 1mm; }
+    .lbl { color: #666; }
+    .logo-wrap img { max-width: 34mm; max-height: 20mm; }
+
+    .doc-title {
+      margin: 7mm 0 1mm;
+      padding-bottom: 1.5mm;
+      border-bottom: 1pt solid #000;
+      font-size: 15pt;
+      font-weight: bold;
+      letter-spacing: 0.5pt;
+    }
+
+    .doc-row { display: flex; gap: 8mm; margin-top: 4mm; }
+    .doc-identity { flex: 1 1 50%; }
+    .party-box {
+      flex: 1 1 50%;
+      border: 0.6pt solid #999;
+      padding: 2.5mm 3mm;
+    }
+    .receipt-number { font-size: 12pt; font-weight: bold; }
+    .box-title {
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 0.4pt;
+      color: #666;
+      margin-bottom: 1mm;
+    }
+
+    /* The settlement statement: the one sentence the reader is looking for. */
+    .statement {
+      margin: 7mm 0 0;
+      padding: 4mm;
+      border: 0.8pt solid #000;
+      background: #f4f4f4;
+    }
+    .statement .amount { font-size: 16pt; font-weight: bold; }
+    .in-words { font-style: italic; margin-top: 1.5mm; font-size: 8.5pt; }
+
+    table.detail {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6mm;
+      font-size: 8.5pt;
+    }
+    table.detail th, table.detail td {
+      border: 0.5pt solid #bbb;
+      padding: 1.8mm 2.5mm;
+      text-align: left;
+    }
+    table.detail th {
+      background: #eee;
+      font-size: 7pt;
+      text-transform: uppercase;
+      letter-spacing: 0.3pt;
+      color: #444;
+      width: 38%;
+    }
+    td.numeric { text-align: right; white-space: nowrap; }
+
+    .signature {
+      margin-top: 14mm;
+      display: flex;
+      justify-content: space-between;
+      font-size: 8pt;
+    }
+    .signature .slot { width: 46%; }
+    .sig-line {
+      margin-top: 12mm;
+      border-top: 0.6pt solid #000;
+      padding-top: 1.2mm;
+      color: #555;
+    }
+
+    /* A cancelled receipt must never be mistaken for a live one, including
+       after it has been printed and filed. */
+    .void-banner {
+      margin-top: 6mm;
+      padding: 3mm;
+      border: 1pt solid #000;
+      text-align: center;
+      font-weight: bold;
+      letter-spacing: 1pt;
+    }
+
+    .note { margin-top: 6mm; font-size: 7.5pt; color: #555; }
+  </style>
+</head>
+<body>
+
+{# ========== HEADER ========== #}
+<div class="header">
+  <div class="identity">
+    <div class="company-name">{{ company.NAME }}</div>
+    <div class="company-info">
+      {{ company.ADDRESS }}<br>
+      {% comment %}Colons live inside the msgid: French and other locales space
+      or replace punctuation differently, so the colon cannot be appended in the
+      markup.{% endcomment %}
+      {% if company.PHONE %}<span class="lbl">{% trans "TEL:" %}</span> {{ company.PHONE }}{% endif %}
+      {% if company.EMAIL %}&nbsp;|&nbsp;{{ company.EMAIL }}{% endif %}<br>
+      {% if company.NIF %}<span class="lbl">{% trans "NIF:" %}</span> {{ company.NIF }}{% endif %}
+      {% if company.RC %}&nbsp;|&nbsp;<span class="lbl">{% trans "RC:" %}</span> {{ company.RC }}{% endif %}
+    </div>
+  </div>
+  <div class="meta">
+    <div class="logo-wrap">
+      <img src="static/logo.png" alt="{% trans "Company logo" %}" />
+    </div>
+  </div>
+</div>
+
+<div class="doc-title">{% trans "PAYMENT RECEIPT" %}</div>
+
+<div class="doc-row">
+  <div class="doc-identity">
+    <div class="receipt-number">{{ receipt.receipt_number }}</div>
+    <div>
+      <span class="lbl">{% trans "Issued on:" %}</span>
+      {{ receipt.issued_at|date:"d/m/Y" }} {% trans "at" %} {{ receipt.issued_at|date:"H:i" }}
+    </div>
+    <div>
+      <span class="lbl">{% trans "Invoice settled:" %}</span>
+      {{ invoice.invoice_number }}
+    </div>
+    <div>
+      <span class="lbl">{% trans "Invoice date:" %}</span>
+      {{ invoice.invoice_date|date:"d/m/Y" }}
+    </div>
+  </div>
+
+  <div class="party-box">
+    <div class="box-title">{% trans "Received from" %}</div>
+    <div><strong>{{ receipt.customer_name }}</strong></div>
+    {% if receipt.customer_nif %}
+      <div><span class="lbl">{% trans "NIF:" %}</span> {{ receipt.customer_nif }}</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ========== THE STATEMENT ========== #}
+<div class="statement">
+  <div class="box-title">{% trans "Amount received, with thanks" %}</div>
+  <div class="amount">{{ amounts.amount_paid }}</div>
+  {% comment %}Spelled out for the same reason as on the invoice: OHADA practice
+  treats the written amount as the guard against a digit being altered after
+  issue.{% endcomment %}
+  <div class="in-words">{{ amount_in_words }}</div>
+</div>
+
+<table class="detail">
+  <tr>
+    <th>{% trans "Invoice total" %}</th>
+    <td class="numeric">{{ amounts.invoice_total }}</td>
+  </tr>
+  <tr>
+    <th>{% trans "Total paid" %}</th>
+    <td class="numeric">{{ amounts.amount_paid }}</td>
+  </tr>
+  <tr>
+    <th>{% trans "Balance remaining" %}</th>
+    <td class="numeric">{{ amounts.balance }}</td>
+  </tr>
+  {% if payment_method %}
+    <tr>
+      <th>{% trans "Payment method" %}</th>
+      <td>{{ payment_method }}</td>
+    </tr>
+  {% endif %}
+  {% if payment_reference %}
+    <tr>
+      <th>{% trans "Payment reference" %}</th>
+      <td>{{ payment_reference }}</td>
+    </tr>
+  {% endif %}
+</table>
+
+{% if receipt.is_cancelled %}
+  <div class="void-banner">
+    {% trans "CANCELLED" %}
+    {% if receipt.cancellation_reason %}— {{ receipt.cancellation_reason }}{% endif %}
+  </div>
+{% endif %}
+
+<div class="signature">
+  <div class="slot">
+    <div class="sig-line">
+      {% trans "Issued by" %}{% if issued_by %} — {{ issued_by }}{% endif %}
+    </div>
+  </div>
+  <div class="slot">
+    <div class="sig-line">{% trans "Stamp and signature" %}</div>
+  </div>
+</div>
+
+<div class="note">
+  {% trans "This receipt confirms that the invoice above has been settled in full." %}
+</div>
+
+</body>
+</html>

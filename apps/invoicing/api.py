@@ -14,7 +14,7 @@ from apps.core.exceptions import BusinessRuleViolation, ServiceUnavailable
 from apps.core.permissions import HasPermission
 
 from . import services
-from .models import FiscalStatus, Invoice, InvoiceStatus, Payment
+from .models import FiscalStatus, Invoice, InvoiceStatus, Payment, PaymentReceipt
 from .serializers import (
     AllocatePaymentSerializer,
     CancelInvoiceSerializer,
@@ -23,6 +23,7 @@ from .serializers import (
     InvoiceListSerializer,
     InvoiceSerializer,
     PaymentCreateSerializer,
+    PaymentReceiptSerializer,
     PaymentSerializer,
     ReversePaymentSerializer,
 )
@@ -493,3 +494,94 @@ class PaymentViewSet(
             payment, reason=serializer.validated_data["reason"], actor=request.user
         )
         return Response(PaymentSerializer(payment).data)
+
+
+class PaymentReceiptFilter(filters.FilterSet):
+    date_from = filters.DateTimeFilter(field_name="issued_at", lookup_expr="gte")
+    date_to = filters.DateTimeFilter(field_name="issued_at", lookup_expr="lte")
+
+    class Meta:
+        model = PaymentReceipt
+        fields = ["customer", "invoice"]
+
+
+@extend_schema_view(
+    list=extend_schema(tags=["invoicing"], summary="List payment receipts"),
+    retrieve=extend_schema(tags=["invoicing"], summary="Retrieve a payment receipt"),
+)
+class PaymentReceiptViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    """
+    Receipts acknowledging that an invoice has been settled in full.
+
+    Read-only by design. A receipt is raised automatically when an invoice's
+    balance reaches zero — never by hand, because a receipt that does not
+    correspond to money actually received is a false acknowledgement. It is
+    likewise voided only by the reversal that reopened its invoice.
+    """
+
+    queryset = PaymentReceipt.objects.filter(deleted_at__isnull=True).select_related(
+        "invoice", "customer", "issued_by", "settling_payment"
+    )
+    serializer_class = PaymentReceiptSerializer
+    filterset_class = PaymentReceiptFilter
+    search_fields = ["receipt_number", "customer_name", "invoice__invoice_number"]
+    ordering_fields = ["issued_at", "receipt_number"]
+    ordering = ["-issued_at"]
+    permission_classes = [HasPermission]
+    required_permissions = {
+        "list": "invoicing.view_invoice",
+        "retrieve": "invoicing.view_invoice",
+        "pdf": "invoicing.view_invoice",
+        "email": "invoicing.record_payment",
+    }
+
+    @extend_schema(
+        tags=["invoicing"], summary="Render the payment receipt as PDF",
+        parameters=[OpenApiParameter("language", str, enum=["fr", "en"])],
+    )
+    @action(detail=True, methods=["get"])
+    def pdf(self, request, pk=None):
+        receipt = self.get_object()
+        language = request.query_params.get("language") or "fr"
+
+        from .pdf import PDFEngineUnavailable, render_payment_receipt_pdf
+
+        try:
+            pdf_bytes = render_payment_receipt_pdf(receipt, language=language)
+        except PDFEngineUnavailable as exc:
+            # A deployment fault, not a bad request: the operator needs to know
+            # what to install. Nothing was produced, so no copy is counted.
+            logger.exception("Payment receipt PDF rendering is unavailable")
+            raise ServiceUnavailable(str(exc)) from exc
+
+        # Counted only once a document actually exists to hand over.
+        services.register_receipt_print(receipt, actor=request.user)
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'inline; filename="{receipt.receipt_number}.pdf"'
+        )
+        return response
+
+    @extend_schema(tags=["invoicing"], summary="Email the payment receipt to the customer")
+    @action(detail=True, methods=["post"])
+    def email(self, request, pk=None):
+        receipt = self.get_object()
+        if not receipt.customer.email:
+            raise BusinessRuleViolation(
+                "This customer has no email address on file.",
+                code="customer_email_missing",
+            )
+
+        from .tasks import email_payment_receipt
+
+        email_payment_receipt.delay(
+            str(receipt.pk), request.query_params.get("language", "fr")
+        )
+        return Response(
+            {"detail": f"Receipt queued for delivery to {receipt.customer.email}."}
+        )

@@ -1,0 +1,15 @@
+{% load i18n %}{% blocktrans with name=receipt.customer_name %}Dear {{ name }},{% endblocktrans %}
+
+{% blocktrans with number=invoice.invoice_number %}Thank you — we confirm that invoice {{ number }} has been settled in full.{% endblocktrans %}
+
+{% trans "Receipt number:" %} {{ receipt.receipt_number }}
+{% trans "Invoice:" %} {{ invoice.invoice_number }}
+{% trans "Date:" %} {{ receipt.issued_at|date:"d/m/Y" }}
+{% trans "Amount received:" %} {{ receipt.amount_paid|floatformat:0 }} BIF
+
+{% trans "Your receipt is attached to this message." %}
+
+{% trans "Kind regards," %}
+{{ company.NAME }}
+{% if company.PHONE %}{% trans "TEL:" %} {{ company.PHONE }}{% endif %}
+{% if company.EMAIL %}{{ company.EMAIL }}{% endif %}

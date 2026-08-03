@@ -467,6 +467,93 @@ class PaymentAllocation(models.Model):
         return f"{self.payment.reference} → {self.invoice.invoice_number}: {self.amount}"
 
 
+class PaymentReceipt(BaseModel):
+    """
+    Acknowledgement that an invoice has been settled in full.
+
+    Issued automatically the moment an invoice's balance reaches zero — see
+    `services._apply_to_invoice`. A customer who has just paid expects a
+    document confirming it, and leaving that to a manual step means the ones
+    nobody remembers to issue simply never exist.
+
+    One receipt per invoice, enforced by the OneToOne. An invoice reaches zero
+    once: `_apply_to_invoice` only assigns PAID on that transition, and a
+    reversal that reopens the invoice cancels the receipt rather than deleting
+    it, so the numbered series stays dense and the document that was handed to
+    the customer remains on file.
+
+    It carries no amounts of its own, for the same reason `SalesReceipt` does
+    not: every figure is read from the invoice it acknowledges, which is the
+    single place the total was computed. Copying them here would create a
+    second version of the truth that could drift after a credit note.
+    """
+
+    receipt_number = models.CharField(
+        _("receipt number"), max_length=32, unique=True, db_index=True,
+    )
+    invoice = models.OneToOneField(
+        Invoice, on_delete=models.PROTECT, related_name="payment_receipt",
+        verbose_name=_("invoice"),
+    )
+    customer = models.ForeignKey(
+        "partners.Customer", on_delete=models.PROTECT, related_name="payment_receipts",
+        verbose_name=_("customer"),
+    )
+
+    # Snapshotted at issue, as on every other document handed to a customer:
+    # the receipt must reproduce who paid as at the date it was issued, even
+    # if the customer record is later corrected or rebranded.
+    customer_name = models.CharField(_("customer name"), max_length=200)
+    customer_nif = models.CharField(_("customer NIF"), max_length=20, blank=True)
+
+    issued_at = models.DateTimeField(_("issued at"), default=timezone.now, db_index=True)
+    issued_by = models.ForeignKey(
+        "accounts.User", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="issued_payment_receipts", verbose_name=_("issued by"),
+    )
+
+    # The payment that closed the balance. Kept for the method and bank
+    # reference the receipt prints; the full settlement history is the
+    # invoice's allocations, since several payments may have contributed.
+    settling_payment = models.ForeignKey(
+        Payment, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="receipts_issued", verbose_name=_("settling payment"),
+    )
+
+    emailed_at = models.DateTimeField(_("emailed at"), null=True, blank=True)
+    print_count = models.PositiveIntegerField(_("times printed"), default=0)
+    last_printed_at = models.DateTimeField(_("last printed"), null=True, blank=True)
+
+    cancelled_at = models.DateTimeField(_("cancelled at"), null=True, blank=True)
+    cancellation_reason = models.CharField(_("cancellation reason"), max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = _("payment receipt")
+        verbose_name_plural = _("payment receipts")
+        ordering = ("-issued_at",)
+        indexes = [
+            models.Index(fields=["customer", "-issued_at"], name="idx_payreceipt_customer"),
+            models.Index(fields=["-issued_at"], name="idx_payreceipt_date"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.receipt_number} — {self.customer_name}"
+
+    # --- Amounts, read from the invoice -----------------------------------
+
+    @property
+    def amount_paid(self) -> Decimal:
+        return self.invoice.paid_amount
+
+    @property
+    def invoice_total(self) -> Decimal:
+        return self.invoice.total_amount
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self.cancelled_at is not None
+
+
 class FiscalRequestOutcome(models.TextChoices):
     IN_FLIGHT = "IN_FLIGHT", _("In flight")
     SUCCEEDED = "SUCCEEDED", _("Succeeded")

@@ -36,7 +36,7 @@ from apps.core.exceptions import (
     InsufficientStock,
 )
 from apps.core.models import AuditAction
-from apps.core.money import q_internal
+from apps.core.money import q_document, q_internal
 
 from .models import (
     OUTBOUND_TYPES,
@@ -842,12 +842,17 @@ def inventory_valuation(*, warehouse: Warehouse | None = None, as_of=None) -> di
     total_units = ZERO
     product_ids = set()
     for batch in batches.iterator(chunk_size=500):
-        total_value += batch.quantity_remaining * batch.landed_unit_cost
+        # Valued exactly as `reporting.services.inventory_valuation_report`
+        # values each line — batch by batch, at the unit cost the reports
+        # print. Summing the raw four-decimal costs here instead would make
+        # this headline total disagree with the report that itemises it, and
+        # the two are read side by side.
+        total_value += batch.stock_value
         total_units += batch.quantity_remaining
         product_ids.add(batch.product_id)
 
     return {
-        "total_value": q_internal(total_value),
+        "total_value": q_document(total_value),
         "total_units": q_internal(total_units),
         "distinct_products": len(product_ids),
         "batch_count": batches.count(),

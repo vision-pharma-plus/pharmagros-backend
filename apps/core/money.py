@@ -136,18 +136,59 @@ def sum_money(values) -> Decimal:
     return q_internal(total)
 
 
+# Thousands and decimal separators, by locale.
+#
+# French/Burundian convention groups with a narrow no-break space (U+202F) and
+# marks decimals with a comma; English groups with a comma and marks decimals
+# with a point. Printed documents keep U+202F — on paper it is unambiguous,
+# and it is the convention a Burundian reader expects.
+_SEPARATORS = {
+    "fr": ("\u202f", ","),
+    "en": (",", "."),
+}
+
+
+def format_number(value, *, locale: str = "fr", decimals: int = 0) -> str:
+    """
+    Render a number with the separators of `locale`.
+
+    The single place separator conventions are applied on the server, so an
+    amount, a quantity and a percentage on the same document cannot disagree
+    about how a number is written.
+
+    `decimals` is the count actually printed, and it matters beyond cosmetics:
+    a unit cost printed to zero decimals while its line value is computed from
+    four is exactly how a report comes to show 35 x 4 902 = 171 581.
+    """
+    group, point = _SEPARATORS.get(locale, _SEPARATORS["fr"])
+    decimals = max(decimals, 0)
+
+    amount = to_decimal(value).quantize(
+        Decimal(1) if decimals == 0 else Decimal("0." + "0" * decimals),
+        rounding=ROUNDING,
+    )
+    negative = amount < 0
+    # Format with the C conventions, then swap in the locale's own, so the
+    # grouping logic stays in the standard library. The swap routes through a
+    # sentinel because for "en" the target group separator is itself a comma,
+    # and a direct two-step replace would then undo its own first step.
+    digits = f"{abs(amount):,.{decimals}f}"
+    digits = digits.replace(",", "\x00").replace(".", point).replace("\x00", group)
+    return f"-{digits}" if negative else digits
+
+
 def format_bif(value, *, locale: str = "fr") -> str:
     """
     Render a value as BIF for display.
 
-    French/Burundian convention uses a narrow no-break space as the thousands
-    separator and places the currency symbol after the amount. English output
-    keeps the same separator for consistency across a bilingual document set —
-    a report exported in English must still be reconcilable against the
-    French original line by line.
+    BIF has no circulating subunit, so amounts print as whole francs. The
+    currency code follows the amount in both languages, and the grouping
+    follows the locale — an English reader sees "171,570 BIF" where a French
+    one sees the same figure grouped their own way.
+
+    The gap before the code is a NO-BREAK SPACE (U+00A0), not a plain one: it
+    is what stops a renderer breaking the line between the amount and its
+    currency, which would leave a bare number at the end of a line and an
+    orphaned "BIF" at the start of the next.
     """
-    amount = q_document(value)
-    negative = amount < 0
-    digits = f"{abs(amount):,.0f}".replace(",", " ")
-    rendered = f"{digits} BIF"
-    return f"-{rendered}" if negative else rendered
+    return f"{format_number(value, locale=locale, decimals=0)}\u00a0BIF"

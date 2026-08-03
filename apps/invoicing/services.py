@@ -38,6 +38,7 @@ from .models import (
     Payment,
     PaymentAllocation,
     PaymentMethod,
+    PaymentReceipt,
 )
 
 ZERO = Decimal("0")
@@ -579,6 +580,121 @@ def _reject_unsettleable(customer, invoice_ids: list, settleable: list) -> None:
     )
 
 
+def issue_payment_receipt(
+    invoice: Invoice, *, payment: Payment | None = None, actor=None,
+) -> PaymentReceipt | None:
+    """
+    Issue the receipt acknowledging that `invoice` is settled in full.
+
+    Called automatically when an invoice's balance reaches zero. Returns the
+    existing receipt if one was already issued — settlement can be reached more
+    than once in a life that includes a reversal and a re-payment, and a second
+    receipt for the same invoice would double-count in any report that reads
+    them.
+
+    A cancelled receipt is revived rather than replaced, so the number the
+    customer already holds stays valid.
+    """
+    if invoice.status != InvoiceStatus.PAID:
+        return None
+
+    existing = PaymentReceipt.objects.filter(invoice=invoice).first()
+    if existing is not None:
+        if existing.is_cancelled:
+            existing.cancelled_at = None
+            existing.cancellation_reason = ""
+            existing.settling_payment = payment or existing.settling_payment
+            existing.save(
+                update_fields=[
+                    "cancelled_at", "cancellation_reason", "settling_payment", "updated_at",
+                ]
+            )
+        return existing
+
+    receipt = PaymentReceipt.objects.create(
+        receipt_number=next_number("sales.receipt"),
+        invoice=invoice,
+        customer=invoice.customer,
+        customer_name=invoice.customer_name or invoice.customer.business_name,
+        customer_nif=invoice.customer_nif or "",
+        settling_payment=payment,
+        issued_by=actor,
+        created_by=actor,
+    )
+
+    record(
+        AuditAction.CREATE,
+        PaymentReceipt._meta.label,
+        entity_id=str(receipt.pk),
+        entity_label=receipt.receipt_number,
+        new_value={
+            "invoice": invoice.invoice_number,
+            "customer": receipt.customer_name,
+            "amount_paid": str(invoice.paid_amount),
+        },
+        notes=(
+            f"Payment receipt {receipt.receipt_number} issued for "
+            f"invoice {invoice.invoice_number}"
+        ),
+        actor=actor,
+    )
+    return receipt
+
+
+def register_receipt_print(receipt: PaymentReceipt, *, actor=None) -> int:
+    """
+    Count a printed copy of a payment receipt, and return its ordinal.
+
+    Same reasoning as `register_print` for invoices: the page looks identical
+    on every copy, so this counter and its audit entries are the only record
+    that a document was issued more than once.
+    """
+    receipt.print_count = F("print_count") + 1
+    receipt.last_printed_at = timezone.now()
+    receipt.save(update_fields=["print_count", "last_printed_at"])
+    receipt.refresh_from_db(fields=["print_count"])
+    copy_number = receipt.print_count
+
+    record(
+        AuditAction.PRINT,
+        PaymentReceipt._meta.label,
+        entity_id=str(receipt.pk),
+        entity_label=receipt.receipt_number,
+        notes=f"Payment receipt printed (copy #{copy_number})",
+        actor=actor,
+    )
+    return copy_number
+
+
+def cancel_payment_receipt(invoice: Invoice, *, reason: str, actor=None) -> None:
+    """
+    Void the receipt for an invoice that is no longer settled.
+
+    A reversal or credit note can reopen a paid invoice, at which point the
+    receipt asserts something untrue. It is cancelled rather than deleted: the
+    document was handed to the customer, so it stays on file and its number
+    stays consumed.
+    """
+    receipt = PaymentReceipt.objects.filter(invoice=invoice, cancelled_at__isnull=True).first()
+    if receipt is None:
+        return
+
+    receipt.cancelled_at = timezone.now()
+    receipt.cancellation_reason = reason
+    receipt.save(update_fields=["cancelled_at", "cancellation_reason", "updated_at"])
+
+    record(
+        AuditAction.UPDATE,
+        PaymentReceipt._meta.label,
+        entity_id=str(receipt.pk),
+        entity_label=receipt.receipt_number,
+        new_value={"cancelled": True, "reason": reason},
+        changed_fields=["cancelled_at"],
+        notes=f"Payment receipt {receipt.receipt_number} cancelled: {reason}",
+        actor=actor,
+    )
+
+
 def _apply_to_invoice(payment: Payment, invoice: Invoice, amount: Decimal, *, actor=None) -> None:
     """
     Allocate part of a payment to one invoice and refresh its status.
@@ -607,6 +723,12 @@ def _apply_to_invoice(payment: Payment, invoice: Invoice, amount: Decimal, *, ac
         invoice.status = InvoiceStatus.PARTIALLY_PAID
 
     invoice.save(update_fields=["paid_amount", "balance_due", "status", "updated_at"])
+
+    # Settled in full: acknowledge it. Inside the caller's transaction, so a
+    # receipt cannot survive a rolled-back allocation, and its number cannot be
+    # consumed by one either.
+    if invoice.status == InvoiceStatus.PAID:
+        issue_payment_receipt(invoice, payment=payment, actor=actor)
 
 
 @transaction.atomic
@@ -774,6 +896,16 @@ def reverse_payment(payment: Payment, *, reason: str, actor=None) -> Payment:
             if invoice.balance_due > ZERO and invoice.is_overdue:
                 invoice.status = InvoiceStatus.OVERDUE
         invoice.save(update_fields=["paid_amount", "balance_due", "status", "updated_at"])
+
+        # The invoice is no longer settled, so its receipt no longer tells the
+        # truth. Voided, not deleted — the customer was given that document.
+        if invoice.status != InvoiceStatus.PAID:
+            cancel_payment_receipt(
+                invoice,
+                reason=_("Payment %(reference)s reversed: %(reason)s")
+                % {"reference": payment.reference, "reason": reason},
+                actor=actor,
+            )
 
     # The rows go, not just the total. They are what `unallocated_amount` and
     # the invoice's payment history are derived from, so a retained row would

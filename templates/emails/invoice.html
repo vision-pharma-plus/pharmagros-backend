@@ -1,0 +1,41 @@
+{% load i18n %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE|default:'fr' }}">
+<head><meta charset="utf-8"></head>
+<body style="font-family: Helvetica, Arial, sans-serif; font-size: 14px; color: #222; line-height: 1.5;">
+  <p>{% blocktrans with name=invoice.customer_name %}Dear {{ name }},{% endblocktrans %}</p>
+
+  <p>{% blocktrans with number=invoice.invoice_number %}Please find invoice {{ number }} attached.{% endblocktrans %}</p>
+
+  <table cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin: 16px 0;">
+    <tr>
+      <td style="border: 1px solid #ddd; color: #666;">{% trans "Invoice:" %}</td>
+      <td style="border: 1px solid #ddd;"><strong>{{ invoice.invoice_number }}</strong></td>
+    </tr>
+    <tr>
+      <td style="border: 1px solid #ddd; color: #666;">{% trans "Date:" %}</td>
+      <td style="border: 1px solid #ddd;">{{ invoice.invoice_date|date:"d/m/Y" }}</td>
+    </tr>
+    {% if invoice.due_date %}
+      <tr>
+        <td style="border: 1px solid #ddd; color: #666;">{% trans "Due date:" %}</td>
+        <td style="border: 1px solid #ddd;">{{ invoice.due_date|date:"d/m/Y" }}</td>
+      </tr>
+    {% endif %}
+    <tr>
+      <td style="border: 1px solid #ddd; color: #666;">{% trans "Total:" %}</td>
+      <td style="border: 1px solid #ddd;">{{ invoice.total_amount|floatformat:0 }} BIF</td>
+    </tr>
+    <tr>
+      <td style="border: 1px solid #ddd; color: #666;">{% trans "Balance due:" %}</td>
+      <td style="border: 1px solid #ddd;"><strong>{{ invoice.balance_due|floatformat:0 }} BIF</strong></td>
+    </tr>
+  </table>
+
+  <p style="margin-top: 24px;">
+    {% trans "Kind regards," %}<br>
+    <strong>{{ company.NAME }}</strong><br>
+    {% if company.PHONE %}{% trans "TEL:" %} {{ company.PHONE }}<br>{% endif %}
+    {% if company.EMAIL %}{{ company.EMAIL }}{% endif %}
+  </p>
+</body>
+</html>

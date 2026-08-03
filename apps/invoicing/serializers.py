@@ -12,6 +12,7 @@ from .models import (
     Payment,
     PaymentAllocation,
     PaymentMethod,
+    PaymentReceipt,
 )
 
 
@@ -162,6 +163,15 @@ class InvoiceSerializer(serializers.ModelSerializer):
     original_invoice_number = serializers.CharField(
         source="original_invoice.invoice_number", read_only=True, default=None,
     )
+    # The receipt raised when this invoice was settled in full, so the detail
+    # page can offer it directly instead of making the user search the receipt
+    # list for the invoice they are already looking at.
+    payment_receipt_id = serializers.UUIDField(
+        source="payment_receipt.id", read_only=True, default=None,
+    )
+    payment_receipt_number = serializers.CharField(
+        source="payment_receipt.receipt_number", read_only=True, default=None,
+    )
     posted_by_name = serializers.CharField(
         source="posted_by.get_full_name", read_only=True, default="",
     )
@@ -243,6 +253,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "cancelled_at", "cancellation_reason",
             "print_count", "last_printed_at", "emailed_at",
             "original_invoice", "original_invoice_number",
+            "payment_receipt_id", "payment_receipt_number",
             "credit_reason_code", "corrections",
             "payment_allocations", "settled_by_credit_note",
             "is_editable", "is_overdue", "days_overdue", "payment_progress",
@@ -377,3 +388,43 @@ class AllocatePaymentSerializer(serializers.Serializer):
 
 class ReversePaymentSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=255)
+
+
+class PaymentReceiptSerializer(serializers.ModelSerializer):
+    """
+    A payment receipt, with the invoice figures it acknowledges.
+
+    The amounts are read-only properties resolving to the invoice, so this
+    cannot report a total that disagrees with the document it settles.
+    """
+
+    invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+    invoice_date = serializers.DateTimeField(source="invoice.invoice_date", read_only=True)
+    customer_code = serializers.CharField(source="customer.customer_code", read_only=True)
+    issued_by_name = serializers.CharField(
+        source="issued_by.get_full_name", read_only=True, default="",
+    )
+    payment_method = serializers.CharField(
+        source="settling_payment.method", read_only=True, default="",
+    )
+    payment_reference = serializers.CharField(
+        source="settling_payment.reference", read_only=True, default="",
+    )
+
+    amount_paid = MoneySerializerField(read_only=True)
+    invoice_total = MoneySerializerField(read_only=True)
+    is_cancelled = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = PaymentReceipt
+        fields = [
+            "id", "receipt_number", "invoice", "invoice_number", "invoice_date",
+            "customer", "customer_code", "customer_name", "customer_nif",
+            "issued_at", "issued_by", "issued_by_name",
+            "settling_payment", "payment_method", "payment_reference",
+            "amount_paid", "invoice_total",
+            "emailed_at", "print_count", "last_printed_at",
+            "cancelled_at", "cancellation_reason", "is_cancelled",
+            "created_at",
+        ]
+        read_only_fields = fields

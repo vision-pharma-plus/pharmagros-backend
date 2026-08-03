@@ -55,6 +55,60 @@ def email_invoice(invoice_id: str, language: str = "fr") -> bool:
         return False
 
 
+@shared_task(name="apps.invoicing.tasks.email_payment_receipt")
+def email_payment_receipt(receipt_id: str, language: str = "fr") -> bool:
+    """
+    Email a payment receipt with its PDF attached.
+
+    Off the request path for the same reason as `email_invoice`: PDF rendering
+    plus SMTP takes seconds, far longer than the API budget.
+    """
+    from .models import PaymentReceipt
+    from .pdf import render_payment_receipt_pdf
+
+    receipt = (
+        PaymentReceipt.objects.filter(pk=receipt_id)
+        .select_related("customer", "invoice")
+        .first()
+    )
+    if not receipt or not receipt.customer.email:
+        return False
+
+    try:
+        with translation.override(language):
+            context = {
+                "receipt": receipt,
+                "invoice": receipt.invoice,
+                "company": settings.COMPANY,
+            }
+            subject = _("%(company)s : Payment receipt %(number)s") % {
+                "company": settings.COMPANY["NAME"],
+                "number": receipt.receipt_number,
+            }
+            message = EmailMultiAlternatives(
+                subject=subject,
+                body=render_to_string("emails/payment_receipt.txt", context),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[receipt.customer.email],
+            )
+            message.attach_alternative(
+                render_to_string("emails/payment_receipt.html", context), "text/html"
+            )
+            message.attach(
+                f"{receipt.receipt_number}.pdf",
+                render_payment_receipt_pdf(receipt, language=language),
+                "application/pdf",
+            )
+            message.send()
+
+        receipt.emailed_at = timezone.now()
+        receipt.save(update_fields=["emailed_at"])
+        return True
+    except Exception:
+        logger.exception("payment_receipt_email_failed", extra={"receipt_id": receipt_id})
+        return False
+
+
 @shared_task(name="apps.invoicing.tasks.declare_pending_invoices")
 def declare_pending_invoices(limit: int = 100) -> dict:
     """

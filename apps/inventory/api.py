@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.exceptions import BusinessRuleViolation
+from apps.core.pagination import StandardPagination
 from apps.core.permissions import HasPermission
 
 from . import services
@@ -353,7 +354,15 @@ class BulkReceiveStockView(APIView):
 
 
 class StockLevelView(APIView):
-    """Aggregated sellable stock per product."""
+    """
+    Aggregated sellable stock per product.
+
+    Paginated. The catalogue runs to thousands of products, and returning the
+    lot in one response meant the browser rendered every row before showing
+    any of them — the screen someone opens to check one product's availability
+    was the slowest in the application. `page_size` still accepts up to the
+    standard ceiling for a client that genuinely wants a long page.
+    """
 
     permission_classes = [HasPermission]
     required_permissions = "inventory.view_stock"
@@ -366,6 +375,9 @@ class StockLevelView(APIView):
                 "filter", str,
                 description="One of: low_stock, out_of_stock, in_stock",
             ),
+            OpenApiParameter("search", str, description="Product code or name"),
+            OpenApiParameter("page", int),
+            OpenApiParameter("page_size", int),
         ],
         responses={200: StockLevelSerializer(many=True)},
     )
@@ -375,6 +387,7 @@ class StockLevelView(APIView):
         today = timezone.localdate()
         warehouse_id = request.query_params.get("warehouse")
         mode = request.query_params.get("filter")
+        search = (request.query_params.get("search") or "").strip()
 
         # Only ACTIVE, unexpired batches count as sellable — including expired
         # stock here would mask a genuine shortage.
@@ -398,6 +411,20 @@ class StockLevelView(APIView):
         # Both language columns: `name` is a property that resolves one of
         # them, so deferring either would trigger a per-row extra query.
         ).only("id", "product_code", "name_fr", "name_en", "reorder_level")
+
+        if search:
+            # Both names, because the operator may be reading either the
+            # French or the English label off the shelf.
+            products = products.filter(
+                Q(product_code__icontains=search)
+                | Q(name_fr__icontains=search)
+                | Q(name_en__icontains=search)
+            )
+
+        # Ordered so pagination is stable: without it the database may return
+        # rows in a different order per page and a product can appear twice or
+        # not at all while the user is paging through.
+        products = products.order_by("product_code")
 
         results = []
         for product in products.iterator(chunk_size=500):
@@ -432,7 +459,14 @@ class StockLevelView(APIView):
                 }
             )
 
-        return Response(results)
+        # Paginated in Python rather than by the database: `is_low`/`is_out`
+        # are derived from the batch aggregate, not stored, so the low- and
+        # out-of-stock filters cannot be expressed as a queryset filter and the
+        # page boundaries have to be applied after they run. The set is one row
+        # per active product, which is small enough to build before slicing.
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(results, request, view=self)
+        return paginator.get_paginated_response(page)
 
 
 class ValuationView(APIView):

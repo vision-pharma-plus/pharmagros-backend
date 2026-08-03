@@ -220,7 +220,8 @@ def run() -> bool:
         print(f"    RESPONSE: {created.content[:600]}")
     check("create medicine", created.status_code, 201)
     product_id = created.json()["id"]
-    check("product code auto-allocated", created.json()["product_code"].startswith("MED-"), True)
+    product_code = created.json()["product_code"]
+    check("product code auto-allocated", product_code.startswith("MED-"), True)
 
     check("list medicines", api.get("/api/v1/catalog/medicines/").status_code, 200)
     check(
@@ -353,9 +354,13 @@ def run() -> bool:
     print("INVENTORY")
     print("=" * 70)
 
-    levels = api.get("/api/v1/inventory/stock-levels/")
+    # Paginated, so the product is searched for by code rather than scanned
+    # out of a full-catalogue array.
+    levels = api.get(f"/api/v1/inventory/stock-levels/?search={product_code}")
     check("stock levels endpoint", levels.status_code, 200)
-    entry = next((r for r in levels.json() if r["product_id"] == product_id), None)
+    entry = next(
+        (r for r in levels.json()["results"] if r["product_id"] == product_id), None
+    )
     # 400 from the purchase receipt above, plus the 1000-unit opening batch
     # seeded automatically because the product was created with a batch
     # number and expiry date.
