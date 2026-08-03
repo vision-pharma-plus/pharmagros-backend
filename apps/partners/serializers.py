@@ -19,6 +19,11 @@ class CustomerListSerializer(serializers.ModelSerializer):
     # lapsed operating licence *before* an order is started — discovering it
     # only on the detail record would waste the operator's work.
     licence_is_expired = serializers.BooleanField(read_only=True)
+    # Whether credit is permitted at all, as opposed to how much headroom
+    # remains. The sale screen needs both: a blocked account can show a large
+    # available_credit it may not spend, and showing the figure alone told
+    # operators they had credit the server would then refuse.
+    is_credit_eligible = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Customer
@@ -26,7 +31,8 @@ class CustomerListSerializer(serializers.ModelSerializer):
             "id", "customer_code", "business_name", "customer_type", "nif",
             "city", "phone", "email", "status",
             "credit_limit", "outstanding_balance", "available_credit",
-            "credit_blocked", "is_over_limit", "licence_is_expired",
+            "credit_blocked", "credit_block_reason", "is_over_limit",
+            "is_credit_eligible", "licence_is_expired",
             "payment_terms",
         ]
 
@@ -37,6 +43,7 @@ class CustomerSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, read_only=True,
     )
     is_over_limit = serializers.BooleanField(read_only=True)
+    is_credit_eligible = serializers.BooleanField(read_only=True)
     is_institutional = serializers.BooleanField(read_only=True)
     licence_is_expired = serializers.BooleanField(read_only=True)
     payment_term_days = serializers.IntegerField(read_only=True)
@@ -59,7 +66,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             "contact_person", "email", "phone", "alternate_phone",
             "address", "city", "province", "country",
             "credit_limit", "outstanding_balance", "available_credit",
-            "credit_utilisation", "is_over_limit", "payment_terms", "payment_term_days",
+            "credit_utilisation", "is_over_limit", "is_credit_eligible",
+            "payment_terms", "payment_term_days",
             "credit_blocked", "credit_block_reason", "discount_percent",
             "is_institutional", "status", "notes",
             "first_sale_at", "last_sale_at",

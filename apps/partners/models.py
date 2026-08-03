@@ -209,34 +209,73 @@ class Customer(BaseModel):
         """
         return bool(self.licence_expiry and self.licence_expiry < timezone.localdate())
 
-    def can_buy_on_credit(self, amount: Decimal) -> tuple[bool, str]:
+    @property
+    def is_credit_eligible(self) -> bool:
+        """
+        Whether this customer may transact on credit *at all*, ignoring amount.
+
+        Distinct from having headroom: an account can carry a large unused
+        limit and still be barred because it is blocked, cash-only or
+        inactive. Screens that advertise available credit must consult this
+        first, otherwise they offer credit the server will refuse.
+        """
+        return (
+            self.status == PartnerStatus.ACTIVE
+            and not self.credit_blocked
+            and self.payment_terms != PaymentTerms.CASH
+            and self.credit_limit > 0
+        )
+
+    def can_buy_on_credit(self, amount: Decimal) -> tuple[bool, str, str]:
         """
         Whether a credit sale of `amount` is permissible.
 
-        Returns (allowed, reason) rather than raising, so the caller can decide
-        whether to block or to request an override from a supervisor.
+        Returns (allowed, reason, code) rather than raising, so the caller can
+        decide whether to block or to request an override from a supervisor.
+
+        The code distinguishes the five refusals, which are *not*
+        interchangeable: only a genuine limit breach is something a supervisor
+        can sensibly override. Collapsing them into one code left the sales
+        floor being told a blocked account had "exceeded its credit limit",
+        and being offered an override that could not fix it.
         """
         if self.status != PartnerStatus.ACTIVE:
-            return False, str(_("The customer account is not active."))
+            return False, str(_("The customer account is not active.")), "customer_inactive"
         if self.credit_blocked:
-            return False, str(
-                _("Credit is blocked for this customer: %(reason)s")
-                % {"reason": self.credit_block_reason or _("no reason recorded")}
+            return (
+                False,
+                str(
+                    _("Credit is blocked for this customer: %(reason)s")
+                    % {"reason": self.credit_block_reason or _("no reason recorded")}
+                ),
+                "credit_blocked",
             )
         if self.payment_terms == PaymentTerms.CASH:
-            return False, str(_("This customer is configured for cash payment only."))
-        if self.credit_limit <= 0:
-            return False, str(_("No credit limit has been set for this customer."))
-        if self.outstanding_balance + amount > self.credit_limit:
-            return False, str(
-                _("Credit limit exceeded: balance %(balance)s + %(amount)s exceeds the limit of %(limit)s BIF.")
-                % {
-                    "balance": self.outstanding_balance,
-                    "amount": amount,
-                    "limit": self.credit_limit,
-                }
+            return (
+                False,
+                str(_("This customer is configured for cash payment only.")),
+                "cash_only",
             )
-        return True, ""
+        if self.credit_limit <= 0:
+            return (
+                False,
+                str(_("No credit limit has been set for this customer.")),
+                "no_credit_limit",
+            )
+        if self.outstanding_balance + amount > self.credit_limit:
+            return (
+                False,
+                str(
+                    _("Credit limit exceeded: balance %(balance)s + %(amount)s exceeds the limit of %(limit)s BIF.")
+                    % {
+                        "balance": self.outstanding_balance,
+                        "amount": amount,
+                        "limit": self.credit_limit,
+                    }
+                ),
+                "credit_limit_exceeded",
+            )
+        return True, "", ""
 
 
 class Supplier(BaseModel):

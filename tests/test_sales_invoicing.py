@@ -20,9 +20,12 @@ from apps.core.exceptions import (
 from apps.core.money import q_document
 from apps.invoicing.models import CreditNoteReason, InvoiceStatus, InvoiceType
 from apps.invoicing.services import (
+    allocate_payment,
     cancel_invoice,
+    create_invoice,
     issue_credit_note,
     issue_credit_note_for_invoice,
+    post_invoice,
     record_payment,
     reverse_payment,
     update_invoice,
@@ -48,6 +51,35 @@ pytestmark = pytest.mark.django_db
 # `apps.core.money` exists to prevent. `q_document` collapses it to exactly
 # 150,000 at the one place it matters — the printed page.
 INVOICE_TOTAL = Decimal("149999.9952")
+
+
+def create_posted_invoice(customer, actor, *, unit_price=Decimal("50000")):
+    """
+    A posted standalone invoice, with no sale or stock behind it.
+
+    Used by the allocation tests to raise a second debt for a customer who
+    already holds credit. Deliberately not built through the sale path: those
+    tests are about where money lands, and a sale would drag batch
+    reservation and stock movements into a scenario that has nothing to say
+    about either.
+
+    Marked as a credit sale only when the customer carries a NIF, since
+    posting a credit invoice without one is refused — an over-the-counter
+    customer gets an ordinary open invoice instead.
+    """
+    invoice = create_invoice(
+        customer=customer,
+        lines=[
+            {
+                "description": "Prestation",
+                "quantity": Decimal("1"),
+                "unit_price": unit_price,
+            }
+        ],
+        is_credit_sale=bool(customer.nif),
+        actor=actor,
+    )
+    return post_invoice(invoice, actor=actor)
 
 
 @pytest.fixture
@@ -325,8 +357,92 @@ class TestCreditControl:
             lines=[{"product": product, "quantity": Decimal("1")}],
             actor=pharmacist,
         )
-        with pytest.raises(CreditLimitExceeded):
+        with pytest.raises(CreditLimitExceeded) as exc:
             confirm_sale(sale, actor=pharmacist)
+
+        # Not "credit_limit_exceeded": the account has ample headroom and
+        # reporting a breach sent the sales floor looking for an override that
+        # could not have helped. The block reason must reach the operator.
+        assert exc.value.code == "credit_blocked"
+        assert "Contentieux" in str(exc.value.message)
+
+    def test_blocked_credit_cannot_be_overridden(
+        self, product, warehouse, credit_customer, batch, pharmacist,
+        store_manager, admin_user,
+    ):
+        """
+        A block is a standing credit decision, not a counter-level judgement.
+
+        Letting a supervisor override it at the till would silently reverse a
+        decision made deliberately elsewhere — exactly what the block exists
+        to prevent.
+        """
+        from apps.partners.services import block_credit
+
+        block_credit(credit_customer, reason="Contentieux", actor=admin_user)
+        credit_customer.refresh_from_db()
+
+        sale = create_sale(
+            customer=credit_customer, warehouse=warehouse,
+            sale_type=SaleType.CREDIT,
+            lines=[{"product": product, "quantity": Decimal("1")}],
+            actor=pharmacist,
+        )
+        with pytest.raises(CreditLimitExceeded) as exc:
+            confirm_sale(
+                sale, actor=pharmacist,
+                credit_override_reason="Accord direction",
+                credit_override_by=store_manager,
+            )
+        assert exc.value.code == "credit_blocked"
+
+    def test_cash_only_customer_is_refused_with_its_own_code(
+        self, product, warehouse, credit_customer, batch, pharmacist
+    ):
+        from apps.partners.models import PaymentTerms
+
+        credit_customer.payment_terms = PaymentTerms.CASH
+        credit_customer.save(update_fields=["payment_terms"])
+
+        sale = create_sale(
+            customer=credit_customer, warehouse=warehouse,
+            sale_type=SaleType.CREDIT,
+            lines=[{"product": product, "quantity": Decimal("1")}],
+            actor=pharmacist,
+        )
+        with pytest.raises(CreditLimitExceeded) as exc:
+            confirm_sale(sale, actor=pharmacist)
+        assert exc.value.code == "cash_only"
+
+    def test_customer_without_a_limit_is_refused_with_its_own_code(
+        self, product, warehouse, credit_customer, batch, pharmacist
+    ):
+        credit_customer.credit_limit = Decimal("0")
+        credit_customer.save(update_fields=["credit_limit"])
+
+        sale = create_sale(
+            customer=credit_customer, warehouse=warehouse,
+            sale_type=SaleType.CREDIT,
+            lines=[{"product": product, "quantity": Decimal("1")}],
+            actor=pharmacist,
+        )
+        with pytest.raises(CreditLimitExceeded) as exc:
+            confirm_sale(sale, actor=pharmacist)
+        assert exc.value.code == "no_credit_limit"
+
+    def test_credit_eligibility_is_independent_of_headroom(self, credit_customer):
+        """
+        A blocked account keeps its unused limit.
+
+        The sale screen reads both: showing available_credit alone advertised
+        credit the server would then refuse.
+        """
+        credit_customer.credit_limit = Decimal("1000000")
+        credit_customer.outstanding_balance = Decimal("0")
+        credit_customer.credit_blocked = True
+
+        assert credit_customer.available_credit == Decimal("1000000")
+        assert credit_customer.is_credit_eligible is False
 
     def test_balance_is_derived_not_incremented(
         self, confirmed_sale, credit_customer
@@ -396,6 +512,238 @@ class TestPayments:
             record_payment(
                 customer=credit_customer, amount=Decimal("0"), actor=pharmacist
             )
+
+    def test_paid_amount_always_equals_its_allocations(
+        self, confirmed_sale, credit_customer, pharmacist
+    ):
+        """
+        The invariant the whole allocation model rests on. An invoice whose
+        paid total does not match the rows justifying it cannot be reconciled
+        against a customer statement.
+        """
+        _sale, invoice = confirmed_sale
+        record_payment(
+            customer=credit_customer, amount=Decimal("60000"), actor=pharmacist
+        )
+        record_payment(
+            customer=credit_customer, amount=Decimal("40000"), actor=pharmacist
+        )
+
+        invoice.refresh_from_db()
+        allocated = sum(
+            allocation.amount for allocation in invoice.payment_allocations.all()
+        )
+        assert invoice.paid_amount == allocated == Decimal("100000")
+
+
+class TestPaymentAllocation:
+    """
+    Where money lands, and what happens to what will not fit.
+
+    Allocation is the seam between a payment arriving and a debt being
+    settled. Money that stalls here is money the pharmacy holds but cannot
+    see, while the customer who paid it is still chased for the balance.
+    """
+
+    def test_naming_an_unpayable_invoice_is_refused_not_redirected(
+        self, confirmed_sale, credit_customer, cash_customer, pharmacist
+    ):
+        """
+        Silently redirecting a targeted payment produces a correct-looking
+        receipt that settles the wrong debt, discovered only when the
+        customer disputes their statement.
+        """
+        _sale, invoice = confirmed_sale
+        other = create_posted_invoice(cash_customer, pharmacist)
+
+        with pytest.raises(BusinessRuleViolation) as exc:
+            record_payment(
+                customer=credit_customer,
+                amount=Decimal("10000"),
+                invoice_ids=[other.id],
+                actor=pharmacist,
+            )
+        assert exc.value.code == "invoice_not_settleable"
+
+        invoice.refresh_from_db()
+        assert invoice.paid_amount == Decimal("0")
+
+    def test_overpayment_is_applied_to_the_next_invoice_posted(
+        self, confirmed_sale, credit_customer, pharmacist
+    ):
+        """
+        Money already in hand settles the next debt without anyone
+        remembering to do it. This is the seamless path: the customer who
+        overpaid is never chased for a balance their credit already covers.
+        """
+        _sale, invoice = confirmed_sale
+        payment = record_payment(
+            customer=credit_customer,
+            amount=INVOICE_TOTAL + Decimal("50000"),
+            actor=pharmacist,
+        )
+        assert payment.unallocated_amount == Decimal("50000")
+
+        later = create_posted_invoice(
+            credit_customer, pharmacist, unit_price=Decimal("30000")
+        )
+
+        later.refresh_from_db()
+        payment.refresh_from_db()
+        assert later.status == InvoiceStatus.PAID
+        assert later.balance_due == Decimal("0")
+        assert payment.unallocated_amount == Decimal("20000")
+
+    def test_credit_taken_before_any_invoice_exists_still_lands(
+        self, credit_customer, pharmacist
+    ):
+        """
+        A deposit paid ahead of invoicing must settle the invoice when it is
+        finally raised, not sit unallocated because nothing was open at the
+        moment the cash arrived.
+        """
+        payment = record_payment(
+            customer=credit_customer, amount=Decimal("80000"), actor=pharmacist
+        )
+        assert payment.unallocated_amount == Decimal("80000")
+
+        invoice = create_posted_invoice(
+            credit_customer, pharmacist, unit_price=Decimal("80000")
+        )
+
+        invoice.refresh_from_db()
+        payment.refresh_from_db()
+        assert invoice.status == InvoiceStatus.PAID
+        assert payment.unallocated_amount == Decimal("0")
+
+    def test_manual_allocation_places_a_standing_credit(
+        self, confirmed_sale, credit_customer, pharmacist
+    ):
+        _sale, invoice = confirmed_sale
+        payment = record_payment(
+            customer=credit_customer,
+            amount=Decimal("40000"),
+            invoice_ids=[invoice.id],
+            actor=pharmacist,
+        )
+        # Reverse nothing; instead raise a second invoice and allocate by hand.
+        second = create_posted_invoice(
+            credit_customer, pharmacist, unit_price=Decimal("10000")
+        )
+        second.refresh_from_db()
+        assert second.balance_due == Decimal("10000")
+
+        extra = record_payment(
+            customer=credit_customer,
+            amount=Decimal("10000"),
+            invoice_ids=[second.id],
+            actor=pharmacist,
+        )
+        second.refresh_from_db()
+        assert second.status == InvoiceStatus.PAID
+        assert extra.unallocated_amount == Decimal("0")
+        assert payment.allocated_amount == Decimal("40000")
+
+    def test_allocating_a_fully_allocated_payment_is_refused(
+        self, confirmed_sale, credit_customer, pharmacist
+    ):
+        _sale, _invoice = confirmed_sale
+        payment = record_payment(
+            customer=credit_customer, amount=Decimal("10000"), actor=pharmacist
+        )
+        with pytest.raises(BusinessRuleViolation) as exc:
+            allocate_payment(payment, actor=pharmacist)
+        assert exc.value.code == "nothing_to_allocate"
+
+    def test_a_reversed_payment_cannot_be_allocated(
+        self, confirmed_sale, credit_customer, pharmacist
+    ):
+        """Withdrawn money is no longer the customer's to spend."""
+        _sale, _invoice = confirmed_sale
+        payment = record_payment(
+            customer=credit_customer,
+            amount=INVOICE_TOTAL + Decimal("25000"),
+            actor=pharmacist,
+        )
+        reverse_payment(payment, reason="Chèque sans provision", actor=pharmacist)
+
+        with pytest.raises(InvalidStateTransition):
+            allocate_payment(payment, actor=pharmacist)
+
+    def test_reversal_removes_the_allocation_rows(
+        self, confirmed_sale, credit_customer, pharmacist
+    ):
+        """
+        Clearing only the total left the rows behind, so withdrawn money
+        showed as both settling the invoice and available to spend again.
+        """
+        _sale, invoice = confirmed_sale
+        payment = record_payment(
+            customer=credit_customer, amount=Decimal("70000"), actor=pharmacist
+        )
+        assert payment.allocations.count() == 1
+
+        reverse_payment(payment, reason="Erreur de saisie", actor=pharmacist)
+
+        payment.refresh_from_db()
+        invoice.refresh_from_db()
+        assert payment.allocations.count() == 0
+        assert payment.unallocated_amount == payment.amount
+        assert invoice.payment_allocations.count() == 0
+        assert invoice.paid_amount == Decimal("0")
+
+    def test_reversal_restores_overdue_rather_than_posted(
+        self, confirmed_sale, credit_customer, pharmacist, today
+    ):
+        """
+        Leaving a past-due invoice at POSTED hides it from the ageing report
+        and the collection list until the nightly sweep — exactly the window
+        in which a bounced cheque needs chasing.
+        """
+        from datetime import timedelta
+
+        _sale, invoice = confirmed_sale
+        invoice.due_date = today - timedelta(days=30)
+        invoice.save(update_fields=["due_date"])
+
+        payment = record_payment(
+            customer=credit_customer, amount=Decimal("50000"), actor=pharmacist
+        )
+        reverse_payment(payment, reason="Chèque sans provision", actor=pharmacist)
+
+        invoice.refresh_from_db()
+        assert invoice.status == InvoiceStatus.OVERDUE
+        assert invoice.balance_due == INVOICE_TOTAL
+
+    def test_credit_note_offset_is_a_real_allocation(
+        self, confirmed_sale, credit_customer, pharmacist
+    ):
+        """
+        A credit note used to inflate paid_amount with no row behind it,
+        leaving an invoice marked PAID with no record of what settled it.
+        """
+        from apps.invoicing.models import PaymentMethod
+
+        _sale, invoice = confirmed_sale
+        issue_credit_note(
+            invoice,
+            lines=[
+                {
+                    "description": "Remise commerciale",
+                    "quantity": Decimal("1"),
+                    "unit_price": Decimal("20000"),
+                }
+            ],
+            reason="Remise accordée",
+            reason_code=CreditNoteReason.DISCOUNT_GRANTED,
+            actor=pharmacist,
+        )
+
+        invoice.refresh_from_db()
+        allocations = list(invoice.payment_allocations.select_related("payment"))
+        assert len(allocations) == 1
+        assert allocations[0].payment.method == PaymentMethod.CREDIT_NOTE
+        assert invoice.paid_amount == allocations[0].amount == Decimal("20000")
 
 
 class TestInvoiceImmutability:

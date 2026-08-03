@@ -245,6 +245,12 @@ def post_invoice(invoice: Invoice, *, actor=None) -> Invoice:
 
     invoice.save()
 
+    # Money the customer has already handed over settles this invoice
+    # immediately. Credit notes are excluded: a note is itself a reduction of
+    # what is owed, not a receipt to be spent against other documents.
+    if invoice.invoice_type != InvoiceType.CREDIT_NOTE:
+        apply_available_credit(invoice, actor=actor)
+
     # The customer's exposure changes the moment the invoice becomes real.
     if invoice.is_credit_sale:
         from apps.partners.services import recompute_balance
@@ -379,6 +385,70 @@ def cancel_invoice(invoice: Invoice, *, reason: str, actor=None) -> Invoice:
 # ---------------------------------------------------------------------------
 
 
+def _settleable_invoices(customer, invoice_ids: list | None = None):
+    """
+    Open invoices for a customer, locked, in the order money should settle them.
+
+    Oldest due date first; invoices with no due date settle last. That is the
+    standard commercial convention and the one that minimises the customer's
+    ageing profile — important because ageing drives credit decisions and
+    collection escalation.
+
+    Rows are locked here rather than read and re-fetched later: every caller
+    goes on to mutate `paid_amount`, and two payments landing on one invoice
+    concurrently would otherwise each compute a new balance from the same
+    stale figure and lose one of the two.
+    """
+    queryset = Invoice.objects.select_for_update().filter(
+        customer=customer,
+        status__in=OPEN_STATUSES,
+        balance_due__gt=ZERO,
+        deleted_at__isnull=True,
+    )
+    if invoice_ids:
+        queryset = queryset.filter(id__in=invoice_ids)
+    return queryset.order_by(F("due_date").asc(nulls_last=True), "invoice_date")
+
+
+def _allocate(payment: Payment, invoices, remaining: Decimal, *, actor=None) -> Decimal:
+    """
+    Spread `remaining` across `invoices`, returning what could not be placed.
+
+    Shared by every path that puts money against invoices — a new payment, a
+    credit note offset, and the drawdown of an existing credit when a fresh
+    invoice is posted — so all three produce the same allocation rows and the
+    same status transitions.
+    """
+    for invoice in invoices:
+        if remaining <= ZERO:
+            break
+        applied = min(remaining, invoice.balance_due)
+        if applied <= ZERO:
+            continue
+        _apply_to_invoice(payment, invoice, applied, actor=actor)
+        remaining = q_internal(remaining - applied)
+    return remaining
+
+
+def _sync_allocated_amount(payment: Payment) -> Decimal:
+    """
+    Reset a payment's allocated total to the sum of its live allocation rows.
+
+    Derived rather than incremented, for the same reason as the customer
+    balance: allocations are added by several paths and removed on reversal,
+    and a running tally would drift out of agreement with the rows that
+    justify it. `unallocated_amount` is read to decide whether a customer has
+    money in hand, so drift here spends money twice.
+    """
+    total = q_internal(
+        payment.allocations.aggregate(total=Sum("amount"))["total"] or ZERO
+    )
+    if payment.allocated_amount != total:
+        payment.allocated_amount = total
+        payment.save(update_fields=["allocated_amount", "updated_at"])
+    return total
+
+
 @transaction.atomic
 def record_payment(
     *,
@@ -394,10 +464,16 @@ def record_payment(
     """
     Record a payment and allocate it to open invoices.
 
-    When no specific invoices are named, allocation is oldest-due-first. That
-    is the standard commercial convention and the one that minimises the
-    customer's ageing profile — important because ageing drives credit
-    decisions and collection escalation.
+    When no specific invoices are named, allocation is oldest-due-first.
+
+    Naming invoices that cannot take the money is refused rather than quietly
+    ignored: silently redirecting a payment the cashier aimed at a particular
+    invoice produces a correct-looking receipt that settles the wrong debt,
+    and nobody discovers it until the customer disputes their statement.
+
+    Anything left over after the open invoices are settled stays on the
+    payment as unallocated credit and is drawn down automatically by
+    `post_invoice`.
     """
     amount = q_internal(amount)
     if amount <= ZERO:
@@ -419,25 +495,13 @@ def record_payment(
         created_by=actor,
     )
 
-    open_invoices = Invoice.objects.select_for_update().filter(
-        customer=customer, status__in=OPEN_STATUSES,
-        balance_due__gt=ZERO, deleted_at__isnull=True,
-    )
+    open_invoices = list(_settleable_invoices(customer, invoice_ids))
+
     if invoice_ids:
-        open_invoices = open_invoices.filter(id__in=invoice_ids)
-    # Oldest due date first; invoices with no due date settle last.
-    open_invoices = open_invoices.order_by(F("due_date").asc(nulls_last=True), "invoice_date")
+        _reject_unsettleable(customer, invoice_ids, open_invoices)
 
-    remaining = amount
-    for invoice in open_invoices:
-        if remaining <= ZERO:
-            break
-        applied = min(remaining, invoice.balance_due)
-        _apply_to_invoice(payment, invoice, applied, actor=actor)
-        remaining = q_internal(remaining - applied)
-
-    payment.allocated_amount = q_internal(amount - remaining)
-    payment.save(update_fields=["allocated_amount", "updated_at"])
+    remaining = _allocate(payment, open_invoices, amount, actor=actor)
+    _sync_allocated_amount(payment)
 
     from apps.partners.services import recompute_balance
 
@@ -461,11 +525,77 @@ def record_payment(
     return payment
 
 
-def _apply_to_invoice(payment: Payment, invoice: Invoice, amount: Decimal, *, actor=None) -> None:
-    """Allocate part of a payment to one invoice and refresh its status."""
-    PaymentAllocation.objects.create(
-        payment=payment, invoice=invoice, amount=amount, created_by=actor,
+def _reject_unsettleable(customer, invoice_ids: list, settleable: list) -> None:
+    """
+    Refuse a payment naming an invoice that cannot receive it.
+
+    Distinguishes the three reasons so the cashier is told which invoice is
+    wrong and why, rather than being handed a generic failure on a screen
+    that has already taken the customer's cash.
+    """
+    settleable_ids = {invoice.pk for invoice in settleable}
+    unsettleable = [str(pk) for pk in invoice_ids if pk not in settleable_ids]
+    if not unsettleable:
+        return
+
+    known = {
+        invoice.pk: invoice
+        for invoice in Invoice.objects.filter(
+            id__in=unsettleable, deleted_at__isnull=True
+        )
+    }
+
+    problems = []
+    for raw_id in unsettleable:
+        invoice = next(
+            (inv for pk, inv in known.items() if str(pk) == raw_id), None
+        )
+        if invoice is None:
+            problems.append(_("%(id)s: no such invoice.") % {"id": raw_id})
+        elif invoice.customer_id != customer.pk:
+            problems.append(
+                _("%(number)s belongs to another customer.")
+                % {"number": invoice.invoice_number}
+            )
+        elif invoice.status not in OPEN_STATUSES:
+            problems.append(
+                _("%(number)s is %(status)s and cannot take a payment.")
+                % {
+                    "number": invoice.invoice_number,
+                    "status": invoice.get_status_display(),
+                }
+            )
+        else:
+            problems.append(
+                _("%(number)s is already settled in full.")
+                % {"number": invoice.invoice_number}
+            )
+
+    raise BusinessRuleViolation(
+        _("This payment cannot be applied as requested. %(problems)s")
+        % {"problems": " ".join(problems)},
+        code="invoice_not_settleable",
+        details={"invoices": unsettleable},
     )
+
+
+def _apply_to_invoice(payment: Payment, invoice: Invoice, amount: Decimal, *, actor=None) -> None:
+    """
+    Allocate part of a payment to one invoice and refresh its status.
+
+    The allocation row is created with `update_or_create` because one payment
+    may reach the same invoice twice — a credit drawn down in two passes, or a
+    caller re-running a partially completed allocation — and the
+    `unique_payment_invoice_allocation` constraint makes a blind insert fail
+    there. The pair stays unique and the amounts accumulate.
+    """
+    allocation, created = PaymentAllocation.objects.get_or_create(
+        payment=payment, invoice=invoice,
+        defaults={"amount": amount, "created_by": actor},
+    )
+    if not created:
+        allocation.amount = q_internal(allocation.amount + amount)
+        allocation.save(update_fields=["amount"])
 
     invoice.paid_amount = q_internal(invoice.paid_amount + amount)
     invoice.balance_due = q_internal(invoice.total_amount - invoice.paid_amount)
@@ -477,6 +607,131 @@ def _apply_to_invoice(payment: Payment, invoice: Invoice, amount: Decimal, *, ac
         invoice.status = InvoiceStatus.PARTIALLY_PAID
 
     invoice.save(update_fields=["paid_amount", "balance_due", "status", "updated_at"])
+
+
+@transaction.atomic
+def apply_available_credit(invoice: Invoice, *, actor=None) -> Decimal:
+    """
+    Draw down a customer's unallocated payments against a newly open invoice.
+
+    Money already in hand must settle the next debt without anyone
+    remembering to do it. Without this, an overpayment or a payment taken
+    before its invoice existed sits unallocated forever while the same
+    customer is chased for the balance it should already have cleared.
+
+    Oldest payment first, so the credit that has been held longest is the one
+    that clears. Returns the amount applied.
+    """
+    if invoice.status not in OPEN_STATUSES or invoice.balance_due <= ZERO:
+        return ZERO
+
+    credits = (
+        Payment.objects.select_for_update()
+        .filter(
+            customer_id=invoice.customer_id,
+            is_reversed=False,
+            deleted_at__isnull=True,
+            allocated_amount__lt=F("amount"),
+        )
+        .order_by("payment_date", "reference")
+    )
+
+    applied_total = ZERO
+    for payment in credits:
+        if invoice.balance_due <= ZERO:
+            break
+        available = q_internal(payment.amount - payment.allocated_amount)
+        if available <= ZERO:
+            continue
+        applied = min(available, invoice.balance_due)
+        _apply_to_invoice(payment, invoice, applied, actor=actor)
+        _sync_allocated_amount(payment)
+        applied_total = q_internal(applied_total + applied)
+
+        record(
+            AuditAction.UPDATE,
+            Payment._meta.label,
+            entity_id=str(payment.pk),
+            entity_label=payment.reference,
+            new_value={
+                "allocated_to": invoice.invoice_number,
+                "amount": str(applied),
+                "unallocated_after": str(payment.unallocated_amount),
+            },
+            changed_fields=["allocated_amount"],
+            notes=(
+                f"Credit of {applied} BIF applied automatically to "
+                f"{invoice.invoice_number}"
+            ),
+            actor=actor,
+        )
+
+    return applied_total
+
+
+@transaction.atomic
+def allocate_payment(
+    payment: Payment, *, invoice_ids: list | None = None, actor=None
+) -> Payment:
+    """
+    Place a payment's unallocated remainder against the customer's open invoices.
+
+    The manual counterpart to the automatic drawdown in `post_invoice`, for
+    money that arrived before there was anything to settle, or that a clerk
+    wants directed at particular invoices rather than the oldest.
+
+    Refuses a reversed payment: that money has been withdrawn and is no
+    longer the customer's to spend.
+    """
+    payment = Payment.objects.select_for_update().get(pk=payment.pk)
+
+    if payment.is_reversed:
+        raise InvalidStateTransition(
+            _("This payment has been reversed and cannot be allocated."),
+            details={"reference": payment.reference},
+        )
+
+    remaining = q_internal(payment.amount - payment.allocated_amount)
+    if remaining <= ZERO:
+        raise BusinessRuleViolation(
+            _("Payment %(reference)s is already fully allocated.")
+            % {"reference": payment.reference},
+            code="nothing_to_allocate",
+        )
+
+    open_invoices = list(_settleable_invoices(payment.customer, invoice_ids))
+    if invoice_ids:
+        _reject_unsettleable(payment.customer, invoice_ids, open_invoices)
+
+    if not open_invoices:
+        raise BusinessRuleViolation(
+            _("%(customer)s has no open invoices to allocate this payment to.")
+            % {"customer": payment.customer.business_name},
+            code="no_open_invoices",
+        )
+
+    left = _allocate(payment, open_invoices, remaining, actor=actor)
+    applied = q_internal(remaining - left)
+    _sync_allocated_amount(payment)
+
+    from apps.partners.services import recompute_balance
+
+    recompute_balance(payment.customer)
+
+    record(
+        AuditAction.UPDATE,
+        Payment._meta.label,
+        entity_id=str(payment.pk),
+        entity_label=payment.reference,
+        new_value={
+            "applied": str(applied),
+            "unallocated_after": str(left),
+        },
+        changed_fields=["allocated_amount"],
+        notes=f"Payment {payment.reference} allocated: {applied} BIF applied",
+        actor=actor,
+    )
+    return payment
 
 
 @transaction.atomic
@@ -493,6 +748,11 @@ def reverse_payment(payment: Payment, *, reason: str, actor=None) -> Payment:
         raise BusinessRuleViolation(
             _("A reason is required to reverse a payment."), code="reason_required"
         )
+
+    # Re-read under lock. Without this, two clerks reversing the same bounced
+    # cheque both pass the check above and each unwind the invoices, taking
+    # the balance back twice as far as the payment ever advanced it.
+    payment = Payment.objects.select_for_update().get(pk=payment.pk)
     if payment.is_reversed:
         raise InvalidStateTransition(_("This payment has already been reversed."))
 
@@ -500,11 +760,26 @@ def reverse_payment(payment: Payment, *, reason: str, actor=None) -> Payment:
         invoice = Invoice.objects.select_for_update().get(pk=allocation.invoice_id)
         invoice.paid_amount = q_internal(max(ZERO, invoice.paid_amount - allocation.amount))
         invoice.balance_due = q_internal(invoice.total_amount - invoice.paid_amount)
-        if invoice.paid_amount <= ZERO:
-            invoice.status = InvoiceStatus.POSTED
-        elif invoice.balance_due > ZERO:
-            invoice.status = InvoiceStatus.PARTIALLY_PAID
+        # A cancelled invoice keeps its status: the money coming back out does
+        # not reopen a document that has been withdrawn.
+        if invoice.status != InvoiceStatus.CANCELLED:
+            if invoice.paid_amount <= ZERO:
+                invoice.status = InvoiceStatus.POSTED
+            elif invoice.balance_due > ZERO:
+                invoice.status = InvoiceStatus.PARTIALLY_PAID
+            # Restore the ageing the payment had cleared. Leaving it POSTED
+            # would hide a past-due debt from the ageing report and the
+            # collection list until the next nightly sweep — precisely the
+            # window in which a bounced cheque needs chasing.
+            if invoice.balance_due > ZERO and invoice.is_overdue:
+                invoice.status = InvoiceStatus.OVERDUE
         invoice.save(update_fields=["paid_amount", "balance_due", "status", "updated_at"])
+
+    # The rows go, not just the total. They are what `unallocated_amount` and
+    # the invoice's payment history are derived from, so a retained row would
+    # show withdrawn money as still settling the invoice while simultaneously
+    # counting it as credit available to spend elsewhere.
+    payment.allocations.all().delete()
 
     payment.is_reversed = True
     payment.reversal_reason = reason
@@ -585,14 +860,38 @@ def issue_credit_note(
     post_invoice(note, actor=actor)
 
     # Offset the original: the credit reduces what the customer owes.
-    credited = min(note.total_amount, original.balance_due)
-    if credited > ZERO:
-        original.paid_amount = q_internal(original.paid_amount + credited)
-        original.balance_due = q_internal(original.total_amount - original.paid_amount)
-        original.status = (
-            InvoiceStatus.PAID if original.balance_due <= ZERO else InvoiceStatus.PARTIALLY_PAID
+    #
+    # Routed through a Payment carrying method=CREDIT_NOTE rather than written
+    # straight onto `paid_amount`, so that an invoice's paid total always
+    # equals the sum of its allocation rows. A bare increment made the two
+    # disagree, leaving an invoice marked PAID with no record of what settled
+    # it — unreconcilable against a customer statement, and invisible to the
+    # reversal path, which only knows how to unwind allocations.
+    credited = ZERO
+    if original.balance_due > ZERO and note.total_amount > ZERO:
+        offset = Payment.objects.create(
+            reference=next_number("sales.receipt", when=note.invoice_date),
+            customer=original.customer,
+            payment_date=note.invoice_date,
+            amount=min(note.total_amount, original.balance_due),
+            method=PaymentMethod.CREDIT_NOTE,
+            bank_reference=note.invoice_number,
+            notes=_("Credit note %(number)s applied to %(original)s")
+            % {"number": note.invoice_number, "original": original.invoice_number},
+            received_by=actor,
+            created_by=actor,
         )
-        original.save(update_fields=["paid_amount", "balance_due", "status", "updated_at"])
+        # Lock the original before touching its balance: it may be taking a
+        # cash payment on another connection at this moment.
+        locked = Invoice.objects.select_for_update().get(pk=original.pk)
+        credited = min(offset.amount, locked.balance_due)
+        if credited > ZERO:
+            _apply_to_invoice(offset, locked, credited, actor=actor)
+            _sync_allocated_amount(offset)
+            # Keep the caller's instance in step with what was just written.
+            original.paid_amount = locked.paid_amount
+            original.balance_due = locked.balance_due
+            original.status = locked.status
 
     from apps.partners.services import recompute_balance
 

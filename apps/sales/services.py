@@ -290,21 +290,29 @@ def confirm_sale(
 
     # --- 1. Credit gate -------------------------------------------------
     if sale.sale_type == SaleType.CREDIT:
-        allowed, reason = customer.can_buy_on_credit(sale.total_amount)
+        allowed, reason, code = customer.can_buy_on_credit(sale.total_amount)
         if not allowed:
-            if not credit_override_reason:
-                from apps.core.exceptions import CreditLimitExceeded
+            from apps.core.exceptions import CreditLimitExceeded
 
-                raise CreditLimitExceeded(
-                    reason,
-                    details={
-                        "customer_code": customer.customer_code,
-                        "credit_limit": str(customer.credit_limit),
-                        "outstanding_balance": str(customer.outstanding_balance),
-                        "available_credit": str(customer.available_credit),
-                        "sale_total": str(sale.total_amount),
-                    },
-                )
+            details = {
+                "customer_code": customer.customer_code,
+                "credit_limit": str(customer.credit_limit),
+                "outstanding_balance": str(customer.outstanding_balance),
+                "available_credit": str(customer.available_credit),
+                "sale_total": str(sale.total_amount),
+            }
+
+            # Only a genuine limit breach is an assumption of risk a supervisor
+            # can take on. A blocked, cash-only or inactive account is a
+            # standing decision about *whether* this customer may owe money at
+            # all, and no amount of authority at the counter changes it — an
+            # override there would silently reverse a credit decision made
+            # elsewhere, which is precisely what the block exists to prevent.
+            if code != "credit_limit_exceeded":
+                raise CreditLimitExceeded(reason, code=code, details=details)
+
+            if not credit_override_reason:
+                raise CreditLimitExceeded(reason, code=code, details=details)
             # An override is a deliberate assumption of risk; it must be
             # attributable to a specific authoriser, not just "someone".
             if credit_override_by is None:

@@ -82,6 +82,52 @@ class CorrectionSummarySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class InvoiceAllocationSerializer(serializers.ModelSerializer):
+    """
+    An allocation seen from the invoice's side.
+
+    The mirror of `PaymentAllocationSerializer`: that one answers "which
+    invoices did this payment settle", this one answers "what settled this
+    invoice". Both directions are needed because the link is many-to-many —
+    one transfer can clear six invoices, and one invoice can be cleared by
+    several instalments.
+
+    `method` is carried because it is the honest distinction between an
+    invoice settled with money and one settled by a credit note. A credit note
+    is applied through a Payment carrying method=CREDIT_NOTE, so the two are
+    indistinguishable by amount alone, and calling both "paid" misstates what
+    happened.
+    """
+
+    payment_reference = serializers.CharField(
+        source="payment.reference", read_only=True,
+    )
+    payment_date = serializers.DateTimeField(source="payment.payment_date", read_only=True)
+    method = serializers.CharField(source="payment.method", read_only=True)
+    bank_reference = serializers.CharField(
+        source="payment.bank_reference", read_only=True, default="",
+    )
+    # Reversal deletes the allocation rows, so in practice this is False for
+    # every row rendered here. It is carried anyway because the flag lives on
+    # the payment rather than the allocation: a payment reversed between this
+    # response being built and read would otherwise be presented as settling
+    # the invoice with no indication the money had gone back out.
+    is_reversed = serializers.BooleanField(source="payment.is_reversed", read_only=True)
+    received_by_name = serializers.CharField(
+        source="payment.received_by.get_full_name", read_only=True, default="",
+    )
+    amount = MoneySerializerField(read_only=True)
+
+    class Meta:
+        model = PaymentAllocation
+        fields = [
+            "id", "payment", "payment_reference", "payment_date", "method",
+            "bank_reference", "is_reversed", "received_by_name",
+            "amount", "created_at",
+        ]
+        read_only_fields = fields
+
+
 class InvoiceListSerializer(serializers.ModelSerializer):
     total_amount = MoneySerializerField(read_only=True)
     balance_due = MoneySerializerField(read_only=True)
@@ -142,12 +188,44 @@ class InvoiceSerializer(serializers.ModelSerializer):
     # and so a second correction is a deliberate act rather than an accident.
     corrections = serializers.SerializerMethodField()
 
+    # What actually settled this invoice, newest first. Without it the detail
+    # page could show a balance but not how it was arrived at, and answering
+    # "which payments were applied to this invoice?" meant leaving the screen
+    # and scanning the payments list for this invoice number.
+    payment_allocations = serializers.SerializerMethodField()
+
+    # True when at least one allocation is a credit-note offset. The client
+    # cannot derive this from `balance_due`, which is zero either way, and the
+    # distinction matters: an invoice cleared by a correction was not paid.
+    settled_by_credit_note = serializers.SerializerMethodField()
+
     @extend_schema_field(CorrectionSummarySerializer(many=True))
     def get_corrections(self, invoice: Invoice) -> list[dict]:
         notes = [
             note for note in invoice.corrections.all() if note.deleted_at is None
         ]
         return CorrectionSummarySerializer(notes, many=True).data
+
+    @extend_schema_field(InvoiceAllocationSerializer(many=True))
+    def get_payment_allocations(self, invoice: Invoice) -> list[dict]:
+        # Ordered in Python rather than by the ORM so the prefetch on the
+        # viewset is reused; re-ordering in the query would discard it and
+        # reintroduce a per-invoice round trip.
+        allocations = sorted(
+            invoice.payment_allocations.all(),
+            key=lambda allocation: allocation.payment.payment_date,
+            reverse=True,
+        )
+        return InvoiceAllocationSerializer(allocations, many=True).data
+
+    def get_settled_by_credit_note(self, invoice: Invoice) -> bool:
+        from .models import PaymentMethod
+
+        return any(
+            allocation.payment.method == PaymentMethod.CREDIT_NOTE
+            and not allocation.payment.is_reversed
+            for allocation in invoice.payment_allocations.all()
+        )
 
     class Meta:
         model = Invoice
@@ -166,6 +244,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "print_count", "last_printed_at", "emailed_at",
             "original_invoice", "original_invoice_number",
             "credit_reason_code", "corrections",
+            "payment_allocations", "settled_by_credit_note",
             "is_editable", "is_overdue", "days_overdue", "payment_progress",
             # --- OBR declaration ---
             # `last_declaration_error` is included because the person who can
@@ -278,6 +357,19 @@ class PaymentCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
     # When omitted, allocation is oldest-due-first — the standard commercial
     # convention and the one that minimises the customer's ageing profile.
+    invoice_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=True,
+    )
+
+
+class AllocatePaymentSerializer(serializers.Serializer):
+    """
+    Direct a payment's unallocated remainder at specific invoices.
+
+    When `invoice_ids` is omitted the remainder settles the customer's open
+    invoices oldest-due-first, the same order the automatic drawdown uses.
+    """
+
     invoice_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, allow_empty=True,
     )

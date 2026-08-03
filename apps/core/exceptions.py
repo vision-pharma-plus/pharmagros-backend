@@ -62,6 +62,16 @@ class ExpiredBatchError(BusinessRuleViolation):
 
 
 class CreditLimitExceeded(BusinessRuleViolation):
+    """
+    A credit sale was refused.
+
+    Carries the specific `code` from `Customer.can_buy_on_credit` rather than
+    always reporting a limit breach: "blocked", "cash only", "inactive" and
+    "no limit set" are different problems with different remedies, and only a
+    true breach can be overridden by a supervisor. Clients branch on the code,
+    so it must survive the trip through the error envelope.
+    """
+
     default_message = _("This sale would exceed the customer's credit limit.")
     code = "credit_limit_exceeded"
 

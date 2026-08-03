@@ -40,6 +40,13 @@
     }
     .header .identity { flex: 1 1 58%; }
     .header .meta     { flex: 0 0 38%; text-align: right; }
+    /* The masthead's three parts stack in reading order rather than sitting on
+       one line: logo (right), then the title spanning the full header width so
+       it can be centred on the page instead of only within the meta column. */
+    .header-title {
+      text-align: center;
+      margin-bottom: 2mm;
+    }
 
     .company-name {
       font-weight: bold;
@@ -54,18 +61,24 @@
     }
     .lbl { color: #444; }
 
-    .date-line { font-size: 8pt; margin-bottom: 1.5mm; }
     .logo-wrap img {
-      width: 70pt;
+      width: 105pt;
       height: auto;
-      margin-bottom: 1.5mm;
     }
 
     .invoice-title {
-      font-size: 13pt;
+      font-size: 16pt;
       font-weight: bold;
-      letter-spacing: 0.7pt;
-      margin-top: 1mm;
+      letter-spacing: 1.2pt;
+    }
+
+    /* Issue date and time sit with the document identity (left column of the
+       doc row), beside the invoice number they belong to, rather than floating
+       in the masthead where they read as part of the letterhead. */
+    .date-line {
+      font-size: 7.5pt;
+      margin-top: 1.5mm;
+      color: #333;
     }
     /* Document identity and customer box share one row below the header, so a
        single full-width rule can run above both and their tops align. */
@@ -162,16 +175,19 @@
     /* A line must not be split across a page break. */
     table.items tr { page-break-inside: avoid; }
 
-    /* Column widths, declared once instead of on every cell. */
+    /* Column widths, declared once instead of on every cell. The expiry column
+       is carved mainly out of DESIGNATION and the two right-hand money
+       columns, which had the most slack; the set still sums to 100%. */
     .col-code  { width: 8%; }
-    .col-desc  { width: 27%; }
+    .col-desc  { width: 22%; }
     .col-lot   { width: 9%; }
-    .col-per   { width: 6%; }
-    .col-qte   { width: 6%; }
+    .col-exp   { width: 7%; }
+    .col-per   { width: 5%; }
+    .col-qte   { width: 5%; }
     .col-pu    { width: 10%; }
-    .col-tax   { width: 5%; }
+    .col-tax   { width: 4%; }
     .col-puttc { width: 11%; }
-    .col-ptttc { width: 18%; }
+    .col-ptttc { width: 19%; }
 
     .text-right  { text-align: right; }
     .text-center { text-align: center; }
@@ -284,22 +300,27 @@
   </div>
 
   <div class="meta">
-    {% comment %}City is part of the issuing-place wording, so it belongs inside
-    the translatable string rather than hard-coded beside it.{% endcomment %}
-    <div class="date-line">
-      {% blocktrans with issue_date=invoice.invoice_date|date:"d/m/Y" %}Buja, On {{ issue_date }}{% endblocktrans %}
-    </div>
     <div class="logo-wrap">
       <img src="static/logo.png" alt="{% trans "Company logo" %}" />
     </div>
-    <div class="invoice-title">{% trans "INVOICE" %}</div>
   </div>
+</div>
+
+<div class="header-title">
+  <div class="invoice-title">{% trans "INVOICE" %}</div>
 </div>
 
 {# Document identity (left) and customer box (right) under one shared rule. #}
 <div class="doc-row">
   <div class="doc-identity">
     <div class="invoice-number">{{ invoice.invoice_number }}</div>
+    {% comment %}City is part of the issuing-place wording, so it belongs inside
+    the translatable string rather than hard-coded beside it. The time of issue
+    is printed alongside the date: several invoices to the same customer on one
+    day are otherwise indistinguishable on paper.{% endcomment %}
+    <div class="date-line">
+      {% blocktrans with issue_date=invoice.invoice_date|date:"d/m/Y" issue_time=invoice.invoice_date|date:"H:i" %}Buja, On {{ issue_date }} at {{ issue_time }}{% endblocktrans %}
+    </div>
     <div class="ref-line">
       {% blocktrans with total=tax_summary.total %}REF : CASH : {{ total }}{% endblocktrans %}
       {% if cashier %}<br>{% blocktrans with cashier_name=cashier %}SERVED BY {{ cashier_name }}{% endblocktrans %}{% endif %}
@@ -309,6 +330,16 @@
   <div class="customer-box">
     <div class="cust-title">{% trans "Customer Information" %}</div>
     <div class="cust-name">{{ invoice.customer_name }}</div>
+    {% comment %}Address and telephone come from the snapshot taken at posting
+    time, so a reprint reproduces the details as they stood when the document
+    was issued. Each is omitted when blank rather than printed as an empty
+    label — walk-in cash customers have neither.{% endcomment %}
+    {% if invoice.customer_address %}
+      <div class="cust-line"><span class="lbl">{% trans "Address:" %}</span> {{ invoice.customer_address }}</div>
+    {% endif %}
+    {% if invoice.customer_phone %}
+      <div class="cust-line"><span class="lbl">{% trans "TEL:" %}</span> {{ invoice.customer_phone }}</div>
+    {% endif %}
     <div class="cust-line">{% trans "SOCIETE" %}</div>
     <div class="cust-line">{% trans "SOUMISE A LA TVA NON" %}</div>
     {% if invoice.customer_nif %}
@@ -330,6 +361,7 @@
       <th class="col-code">{% trans "CODE" %}</th>
       <th class="col-desc">{% trans "DESIGNATION" %}</th>
       <th class="col-lot">{% trans "BATCH" %}</th>
+      <th class="col-exp text-center">{% trans "EXPIRY" %}</th>
       <th class="col-per text-center">{% trans "UNIT" %}</th>
       <th class="col-qte text-center">{% trans "QTY" %}</th>
       <th class="col-pu text-right">{% trans "U.P. EXCL." %}</th>
@@ -344,6 +376,10 @@
       <td class="item-code">{{ line.product_code }}</td>
       <td><span class="item-name">{{ line.description }}</span></td>
       <td>{{ line.batch_numbers }}</td>
+      {% comment %}Expiries are stored parallel to the batch numbers, one per
+      allocated lot in the same order, so the two columns read across as
+      pairs.{% endcomment %}
+      <td class="text-center">{{ line.expiry_dates }}</td>
       <td class="text-center">{{ line.unit_of_measure }}</td>
       <td class="text-center">{{ line.quantity|floatformat:"-2" }}</td>
       <td class="text-right">{{ line.unit_price_display }}</td>

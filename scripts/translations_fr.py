@@ -752,6 +752,7 @@ TRANSLATIONS: dict[str, str] = {
     "CODE": "CODE",
     "DESIGNATION": "DÉSIGNATION",
     "BATCH": "LOT",
+    "EXPIRY": "PÉREMPTION",
     "EXP.": "PÉR.",
     "QTY": "QTÉ",
     "U.P. EXCL.": "P.U. HT",
@@ -825,6 +826,7 @@ TRANSLATIONS: dict[str, str] = {
     # template, so the punctuation is part of the string on both sides.
     "TEL:": "TEL :",
     "NIF:": "NIF :",
+    "Address:": "Adresse :",
     "RC:": "RC :",
     "Tax centre:": "Centre fiscal :",
     "Legal form:": "Forme juridique :",
@@ -839,7 +841,7 @@ TRANSLATIONS: dict[str, str] = {
     # concatenated around the placeholder.
     # blocktrans msgids use gettext placeholders: Django rewrites `{{ var }}`
     # to %(var)s before looking the string up, so the key must match that form.
-    "Buja, On %(issue_date)s": "Buja, le %(issue_date)s",
+    "Buja, On %(issue_date)s at %(issue_time)s": "Buja, le %(issue_date)s à %(issue_time)s",
     "REF : CASH : %(total)s": "RÉF : COMPTANT : %(total)s",
     "SERVED BY %(cashier_name)s": "SERVI PAR %(cashier_name)s",
     "No bank account on file.": "Aucun compte bancaire enregistré.",

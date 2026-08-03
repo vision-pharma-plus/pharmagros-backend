@@ -194,10 +194,11 @@ def check_credit(customer: Customer, amount: Decimal, *, raise_on_fail: bool = T
     Kept separate from `Customer.can_buy_on_credit` so the model stays free of
     exception-raising policy and the service layer owns the decision to block.
     """
-    allowed, reason = customer.can_buy_on_credit(q_internal(amount))
+    allowed, reason, code = customer.can_buy_on_credit(q_internal(amount))
     if not allowed and raise_on_fail:
         raise CreditLimitExceeded(
             reason,
+            code=code,
             details={
                 "customer_id": str(customer.pk),
                 "customer_code": customer.customer_code,

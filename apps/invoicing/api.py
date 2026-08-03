@@ -1,6 +1,6 @@
 import logging
 
-from django.db.models import Q
+from django.db.models import F, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -16,6 +16,7 @@ from apps.core.permissions import HasPermission
 from . import services
 from .models import FiscalStatus, Invoice, InvoiceStatus, Payment
 from .serializers import (
+    AllocatePaymentSerializer,
     CancelInvoiceSerializer,
     CreditNoteSerializer,
     InvoiceCreateSerializer,
@@ -118,7 +119,15 @@ class InvoiceViewSet(
     def get_queryset(self):
         queryset = super().get_queryset().prefetch_related("lines")
         if self.action != "list":
-            queryset = queryset.prefetch_related("corrections")
+            queryset = queryset.prefetch_related(
+                "corrections",
+                # The detail serializer reads payment and payee off every
+                # allocation. Without reaching through to them here, rendering
+                # the payments-applied table is two queries per allocation
+                # row — the list deliberately does not prefetch this, since it
+                # renders a progress bar from `payment_progress` alone.
+                "payment_allocations__payment__received_by",
+            )
         return queryset
 
     def get_serializer_context(self):
@@ -403,6 +412,8 @@ class PaymentViewSet(
         "retrieve": "invoicing.view_invoice",
         "create": "invoicing.record_payment",
         "reverse": "invoicing.record_payment",
+        "allocate": "invoicing.record_payment",
+        "unallocated": "invoicing.view_invoice",
     }
 
     def get_serializer_class(self):
@@ -418,6 +429,54 @@ class PaymentViewSet(
         customer = get_object_or_404(Customer, pk=data.pop("customer"))
         payment = services.record_payment(customer=customer, actor=request.user, **data)
         return Response(PaymentSerializer(payment).data, status=201)
+
+    @extend_schema(
+        tags=["invoicing"],
+        summary="Allocate a payment's unallocated remainder to open invoices",
+        request=AllocatePaymentSerializer,
+        responses={200: PaymentSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def allocate(self, request, pk=None):
+        """
+        Place money already received against the customer's open invoices.
+
+        Normally unnecessary — a remainder is drawn down automatically as soon
+        as the customer's next invoice is posted. This is for directing it at
+        particular invoices, or clearing a credit that has been sitting while
+        no new invoice was raised.
+        """
+        payment = self.get_object()
+        serializer = AllocatePaymentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        payment = services.allocate_payment(
+            payment,
+            invoice_ids=serializer.validated_data.get("invoice_ids") or None,
+            actor=request.user,
+        )
+        return Response(PaymentSerializer(payment).data)
+
+    @extend_schema(
+        tags=["invoicing"],
+        summary="Payments holding unallocated money",
+        responses={200: PaymentSerializer(many=True)},
+    )
+    @action(detail=False, methods=["get"])
+    def unallocated(self, request):
+        """
+        Customer money that is not yet settling any invoice.
+
+        What someone reconciling the accounts is looking for: the system holds
+        this cash but has not decided which debt it clears.
+        """
+        payments = self.get_queryset().filter(
+            is_reversed=False, allocated_amount__lt=F("amount"),
+        )
+        customer = request.query_params.get("customer")
+        if customer:
+            payments = payments.filter(customer_id=customer)
+        return Response(PaymentSerializer(payments, many=True).data)
 
     @extend_schema(
         tags=["invoicing"], summary="Reverse a payment",

@@ -1,17 +1,21 @@
 from django_filters import rest_framework as filters
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from django.http import HttpResponse
+from django.utils.translation import gettext as _
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.core.permissions import HasPermission
 
-from . import services
+from . import imports, services
 from .models import Category, Manufacturer, Medicine, ProductStatus, UnitOfMeasure
 from .serializers import (
     CategorySerializer,
     ManufacturerSerializer,
     MedicineDetailSerializer,
+    MedicineImportSerializer,
     MedicineListSerializer,
     PriceChangeSerializer,
     PriceHistorySerializer,
@@ -91,6 +95,12 @@ class MedicineViewSet(viewsets.ModelViewSet):
         "change_price": "catalog.change_price",
         "price_history": "catalog.view_medicine",
         "stock": "inventory.view_stock",
+        # Importing creates products, so it is gated on the same permission as
+        # creating one by hand. The template is only a blank form and needs
+        # nothing beyond read access to fetch.
+        "import_template": "catalog.view_medicine",
+        "import_format": "catalog.view_medicine",
+        "import_products": "catalog.add_medicine",
     }
 
     def get_serializer_class(self):
@@ -190,6 +200,127 @@ class MedicineViewSet(viewsets.ModelViewSet):
                 ],
             }
         )
+
+    @extend_schema(
+        tags=["catalog"],
+        summary="Download the product import template",
+        description=(
+            "Returns an .xlsx workbook with the expected columns, a worked "
+            "example row, and a reference sheet listing the category, unit and "
+            "manufacturer codes that currently exist."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "lang",
+                str,
+                description="Template language: 'fr' (default) or 'en'.",
+            )
+        ],
+        responses={200: bytes},
+    )
+    @action(detail=False, methods=["get"], url_path="import-template")
+    def import_template(self, request):
+        from django.utils.translation import get_language
+
+        language = request.query_params.get("lang") or get_language() or "fr"
+        content = imports.build_template(language=language)
+
+        response = HttpResponse(
+            content,
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+        )
+        filename = (
+            "product-import-template.xlsx"
+            if language.startswith("en")
+            else "modele-import-produits.xlsx"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    @extend_schema(
+        tags=["catalog"],
+        summary="Describe the import file format",
+        description=(
+            "The column specification the import parser enforces, so the UI can "
+            "render the expected format without keeping its own copy of it."
+        ),
+        responses={200: dict},
+    )
+    @action(detail=False, methods=["get"], url_path="import-format")
+    def import_format(self, request):
+        from django.utils.translation import get_language
+
+        language = get_language() or "fr"
+        return Response(
+            {
+                "max_rows": imports.MAX_ROWS,
+                "columns": [
+                    {
+                        "key": column.key,
+                        "header": column.header(language),
+                        "required": column.required,
+                        "hint": column.hint(language),
+                        "example": column.example,
+                    }
+                    for column in imports.COLUMNS
+                ],
+            }
+        )
+
+    @extend_schema(
+        tags=["catalog"],
+        summary="Import products from a spreadsheet",
+        description=(
+            "Accepts an .xlsx or .csv file. With `dry_run` set the file is only "
+            "validated and nothing is written, which is how the UI previews an "
+            "import before committing it. A commit is atomic: if any valid row "
+            "fails to write, the whole import is rolled back."
+        ),
+        request=MedicineImportSerializer,
+        responses={200: dict},
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="import",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def import_products(self, request):
+        from django.utils.translation import get_language
+
+        serializer = MedicineImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        upload = serializer.validated_data["file"]
+        dry_run = serializer.validated_data["dry_run"]
+
+        report = imports.parse_workbook(
+            upload, language=get_language() or "fr"
+        )
+
+        if report.fatal_error:
+            return Response(report.as_dict(), status=422)
+
+        # A file with any invalid row is never committed. Importing the good
+        # rows and reporting the rest would leave the operator holding a
+        # spreadsheet that is partly applied, with no way to tell which part —
+        # they fix the file and resend it instead.
+        if dry_run or report.error_rows:
+            payload = report.as_dict()
+            payload["committed"] = False
+            if report.error_rows and not dry_run:
+                payload["fatal_error"] = _(
+                    "Nothing was imported: %(count)s row(s) contain errors. "
+                    "Correct them and upload the file again."
+                ) % {"count": len(report.error_rows)}
+            return Response(payload)
+
+        imports.commit(report, actor=request.user)
+        payload = report.as_dict()
+        payload["committed"] = True
+        return Response(payload)
 
 
 class CategoryViewSet(viewsets.ModelViewSet):

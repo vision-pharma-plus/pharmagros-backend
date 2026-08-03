@@ -4,8 +4,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pharmagros 1.0\n"
-"POT-Creation-Date: 2026-08-01 17:55+0000\n"
-"PO-Revision-Date: 2026-08-01 17:55+0000\n"
+"POT-Creation-Date: 2026-08-03 04:33+0000\n"
+"PO-Revision-Date: 2026-08-03 04:33+0000\n"
 "Language: en\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -164,7 +164,7 @@ msgid "active"
 msgstr ""
 
 #: apps/accounts/models.py:108
-#: apps/partners/models.py:312
+#: apps/partners/models.py:351
 msgid "role"
 msgstr ""
 
@@ -188,8 +188,8 @@ msgstr ""
 #: apps/accounts/models.py:192
 #: apps/catalog/models.py:111
 #: apps/partners/models.py:100
-#: apps/partners/models.py:251
-#: apps/partners/models.py:314
+#: apps/partners/models.py:290
+#: apps/partners/models.py:353
 msgid "telephone"
 msgstr ""
 
@@ -323,20 +323,20 @@ msgid "categories"
 msgstr ""
 
 #: apps/catalog/models.py:108
-#: apps/partners/models.py:311
+#: apps/partners/models.py:350
 msgid "name"
 msgstr ""
 
 #: apps/catalog/models.py:109
 #: apps/partners/models.py:107
-#: apps/partners/models.py:256
+#: apps/partners/models.py:295
 msgid "country"
 msgstr ""
 
 #: apps/catalog/models.py:110
 #: apps/partners/models.py:98
-#: apps/partners/models.py:250
-#: apps/partners/models.py:313
+#: apps/partners/models.py:289
+#: apps/partners/models.py:352
 msgid "email"
 msgstr ""
 
@@ -598,7 +598,7 @@ msgstr ""
 #: apps/inventory/models.py:146
 #: apps/invoicing/models.py:109
 #: apps/partners/models.py:133
-#: apps/partners/models.py:276
+#: apps/partners/models.py:315
 #: apps/purchasing/models.py:48
 msgid "status"
 msgstr ""
@@ -655,7 +655,7 @@ msgstr ""
 
 #: apps/catalog/models.py:476
 #: apps/inventory/models.py:297
-#: apps/partners/models.py:340
+#: apps/partners/models.py:379
 #: apps/sales/models.py:378
 msgid "reason"
 msgstr ""
@@ -791,37 +791,37 @@ msgstr ""
 msgid "This batch has expired and cannot be issued."
 msgstr ""
 
-#: apps/core/exceptions.py:65
+#: apps/core/exceptions.py:75
 #: tests/test_translations.py:52
 msgid "This sale would exceed the customer's credit limit."
 msgstr ""
 
-#: apps/core/exceptions.py:70
+#: apps/core/exceptions.py:80
 msgid "This action is not permitted in the document's current state."
 msgstr ""
 
-#: apps/core/exceptions.py:75
+#: apps/core/exceptions.py:85
 #: tests/test_translations.py:57
 msgid "This document has been posted and can no longer be modified."
 msgstr ""
 
-#: apps/core/exceptions.py:140
+#: apps/core/exceptions.py:150
 msgid "The request could not be completed."
 msgstr ""
 
-#: apps/core/exceptions.py:160
+#: apps/core/exceptions.py:170
 msgid "An unexpected error occurred. Please contact support."
 msgstr ""
 
-#: apps/core/exceptions.py:104
+#: apps/core/exceptions.py:114
 msgid "The submitted data is invalid."
 msgstr ""
 
-#: apps/core/exceptions.py:116
+#: apps/core/exceptions.py:126
 msgid "The requested resource was not found."
 msgstr ""
 
-#: apps/core/exceptions.py:128
+#: apps/core/exceptions.py:138
 msgid "You do not have permission to perform this action."
 msgstr ""
 
@@ -995,13 +995,13 @@ msgstr ""
 
 #: apps/inventory/models.py:49
 #: apps/partners/models.py:104
-#: apps/partners/models.py:252
+#: apps/partners/models.py:291
 msgid "address"
 msgstr ""
 
 #: apps/inventory/models.py:50
 #: apps/partners/models.py:105
-#: apps/partners/models.py:253
+#: apps/partners/models.py:292
 msgid "city"
 msgstr ""
 
@@ -1086,7 +1086,7 @@ msgstr ""
 #: apps/invoicing/models.py:159
 #: apps/invoicing/models.py:408
 #: apps/partners/models.py:136
-#: apps/partners/models.py:284
+#: apps/partners/models.py:323
 msgid "notes"
 msgstr ""
 
@@ -1220,7 +1220,7 @@ msgid "product"
 msgstr ""
 
 #: apps/inventory/models.py:123
-#: apps/partners/models.py:287
+#: apps/partners/models.py:326
 #: apps/purchasing/models.py:54
 msgid "supplier"
 msgstr ""
@@ -1346,11 +1346,11 @@ msgstr ""
 msgid "Facturation"
 msgstr ""
 
-#: apps/invoicing/fiscal/client.py:126
+#: apps/invoicing/fiscal/client.py:125
 msgid "OBR credentials are not configured."
 msgstr ""
 
-#: apps/invoicing/fiscal/client.py:176
+#: apps/invoicing/fiscal/client.py:175
 msgid "OBR declaration is disabled in this environment."
 msgstr ""
 
@@ -1835,7 +1835,7 @@ msgstr ""
 #: apps/invoicing/models.py:115
 #: apps/invoicing/models.py:391
 #: apps/partners/models.py:141
-#: apps/partners/models.py:309
+#: apps/partners/models.py:348
 #: apps/sales/models.py:77
 #: apps/sales/models.py:272
 msgid "customer"
@@ -1974,27 +1974,27 @@ msgstr ""
 msgid "%(company)s : Invoice %(number)s"
 msgstr ""
 
-#: apps/invoicing/tasks.py:179
+#: apps/invoicing/tasks.py:178
 msgid "These documents have exhausted their retry attempts and remain undeclared. Review them and resubmit once the cause is corrected."
 msgstr ""
 
-#: apps/invoicing/tasks.py:176
+#: apps/invoicing/tasks.py:175
 msgid "%(count)d invoices could not be declared to the OBR"
 msgstr ""
 
-#: apps/invoicing/tasks.py:247
+#: apps/invoicing/tasks.py:246
 msgid "Contact customers to arrange settlement."
 msgstr ""
 
-#: apps/invoicing/tasks.py:229
+#: apps/invoicing/tasks.py:228
 msgid "%(count)d overdue invoices"
 msgstr ""
 
-#: apps/invoicing/tasks.py:232
+#: apps/invoicing/tasks.py:231
 msgid "Total overdue: %(total)s BIF. Review the receivables ageing report."
 msgstr ""
 
-#: apps/invoicing/tasks.py:245
+#: apps/invoicing/tasks.py:244
 msgid "%(count)d invoices due within 7 days"
 msgstr ""
 
@@ -2244,7 +2244,7 @@ msgid "customer type"
 msgstr ""
 
 #: apps/partners/models.py:87
-#: apps/partners/models.py:247
+#: apps/partners/models.py:286
 msgid "NIF"
 msgstr ""
 
@@ -2261,7 +2261,7 @@ msgid "licence expiry"
 msgstr ""
 
 #: apps/partners/models.py:97
-#: apps/partners/models.py:249
+#: apps/partners/models.py:288
 msgid "contact person"
 msgstr ""
 
@@ -2282,7 +2282,7 @@ msgid "outstanding balance"
 msgstr ""
 
 #: apps/partners/models.py:119
-#: apps/partners/models.py:259
+#: apps/partners/models.py:298
 #: apps/purchasing/models.py:82
 msgid "payment terms"
 msgstr ""
@@ -2311,71 +2311,71 @@ msgstr ""
 msgid "customers"
 msgstr ""
 
-#: apps/partners/models.py:245
+#: apps/partners/models.py:284
 msgid "supplier code"
 msgstr ""
 
-#: apps/partners/models.py:246
+#: apps/partners/models.py:285
 msgid "supplier name"
 msgstr ""
 
-#: apps/partners/models.py:263
+#: apps/partners/models.py:302
 msgid "invoicing currency"
 msgstr ""
 
-#: apps/partners/models.py:267
+#: apps/partners/models.py:306
 msgid "average lead time (days)"
 msgstr ""
 
-#: apps/partners/models.py:271
+#: apps/partners/models.py:310
 msgid "bank"
 msgstr ""
 
-#: apps/partners/models.py:272
+#: apps/partners/models.py:311
 msgid "bank account"
 msgstr ""
 
-#: apps/partners/models.py:273
+#: apps/partners/models.py:312
 msgid "SWIFT / BIC"
 msgstr ""
 
-#: apps/partners/models.py:280
+#: apps/partners/models.py:319
 msgid "approved supplier"
 msgstr ""
 
-#: apps/partners/models.py:283
+#: apps/partners/models.py:322
 msgid "approval notes"
 msgstr ""
 
-#: apps/partners/models.py:288
+#: apps/partners/models.py:327
 msgid "suppliers"
 msgstr ""
 
-#: apps/partners/models.py:315
+#: apps/partners/models.py:354
 msgid "primary contact"
 msgstr ""
 
-#: apps/partners/models.py:318
+#: apps/partners/models.py:357
 msgid "customer contact"
 msgstr ""
 
-#: apps/partners/models.py:319
+#: apps/partners/models.py:358
 msgid "customer contacts"
 msgstr ""
 
-#: apps/partners/models.py:338
+#: apps/partners/models.py:377
 msgid "previous limit"
 msgstr ""
 
-#: apps/partners/models.py:339
+#: apps/partners/models.py:378
 msgid "new limit"
 msgstr ""
 
-#: apps/partners/models.py:348
+#: apps/partners/models.py:387
 msgid "credit limit change"
 msgstr ""
 
-#: apps/partners/models.py:349
+#: apps/partners/models.py:388
 msgid "credit limit changes"
 msgstr ""
 
@@ -2395,39 +2395,39 @@ msgstr ""
 msgid "Blocks all credit sales regardless of the available limit."
 msgstr ""
 
-#: apps/partners/models.py:264
+#: apps/partners/models.py:303
 msgid "Currency in which this supplier invoices (BIF, USD, EUR)."
 msgstr ""
 
-#: apps/partners/models.py:268
+#: apps/partners/models.py:307
 msgid "Used to compute reorder timing."
 msgstr ""
 
-#: apps/partners/models.py:281
+#: apps/partners/models.py:320
 msgid "Only approved suppliers may be selected on a purchase order."
 msgstr ""
 
-#: apps/partners/models.py:220
+#: apps/partners/models.py:243
 msgid "The customer account is not active."
 msgstr ""
 
-#: apps/partners/models.py:227
+#: apps/partners/models.py:256
 msgid "This customer is configured for cash payment only."
 msgstr ""
 
-#: apps/partners/models.py:229
+#: apps/partners/models.py:262
 msgid "No credit limit has been set for this customer."
 msgstr ""
 
-#: apps/partners/models.py:223
+#: apps/partners/models.py:248
 msgid "Credit is blocked for this customer: %(reason)s"
 msgstr ""
 
-#: apps/partners/models.py:232
+#: apps/partners/models.py:269
 msgid "Credit limit exceeded: balance %(balance)s + %(amount)s exceeds the limit of %(limit)s BIF."
 msgstr ""
 
-#: apps/partners/models.py:224
+#: apps/partners/models.py:249
 msgid "no reason recorded"
 msgstr ""
 
@@ -3219,7 +3219,7 @@ msgid "processed by"
 msgstr ""
 
 #: apps/sales/models.py:403
-#: apps/sales/services.py:901
+#: apps/sales/services.py:909
 msgid "return"
 msgstr ""
 
@@ -3239,19 +3239,19 @@ msgstr ""
 msgid "A sale cannot be confirmed without lines."
 msgstr ""
 
-#: apps/sales/services.py:645
+#: apps/sales/services.py:653
 msgid "A reason is required to cancel a sale."
 msgstr ""
 
-#: apps/sales/services.py:649
+#: apps/sales/services.py:657
 msgid "This sale has already been cancelled or fully returned."
 msgstr ""
 
-#: apps/sales/services.py:773
+#: apps/sales/services.py:781
 msgid "A reason is required to process a return."
 msgstr ""
 
-#: apps/sales/services.py:777
+#: apps/sales/services.py:785
 msgid "Returns can only be processed against a confirmed sale."
 msgstr ""
 
@@ -3263,35 +3263,35 @@ msgstr ""
 msgid "Only a draft sale can be confirmed; this one is %(status)s."
 msgstr ""
 
-#: apps/sales/services.py:467
+#: apps/sales/services.py:475
 msgid "The amount tendered (%(tendered)s) is less than the total due (%(total)s)."
 msgstr ""
 
-#: apps/sales/services.py:539
+#: apps/sales/services.py:547
 msgid "Receipt %(number)s has been cancelled and cannot be invoiced."
 msgstr ""
 
-#: apps/sales/services.py:548
+#: apps/sales/services.py:556
 msgid "Sale %(number)s has been cancelled and cannot be invoiced."
 msgstr ""
 
-#: apps/sales/services.py:800
+#: apps/sales/services.py:808
 msgid "A returned quantity must be greater than zero."
 msgstr ""
 
-#: apps/sales/services.py:824
+#: apps/sales/services.py:832
 msgid "No batch allocation was found for this sale line."
 msgstr ""
 
-#: apps/sales/services.py:312
+#: apps/sales/services.py:320
 msgid "A credit limit override must identify the authorising user."
 msgstr ""
 
-#: apps/sales/services.py:562
+#: apps/sales/services.py:570
 msgid "Sale %(sale)s has already been invoiced as %(invoice)s."
 msgstr ""
 
-#: apps/sales/services.py:806
+#: apps/sales/services.py:814
 msgid "Cannot return %(qty)s of %(product)s: only %(max)s remain returnable on this line."
 msgstr ""
 
@@ -3304,158 +3304,167 @@ msgstr ""
 msgid "of"
 msgstr ""
 
-#: templates/pdf/invoice.html:276
+#: templates/pdf/invoice.html:292
+#: templates/pdf/invoice.html:341
 #: templates/pdf/receipt.html:162
 msgid "TEL:"
 msgstr ""
 
-#: templates/pdf/invoice.html:277
+#: templates/pdf/invoice.html:293
 msgid "Tax centre:"
 msgstr ""
 
-#: templates/pdf/invoice.html:279
-#: templates/pdf/invoice.html:315
+#: templates/pdf/invoice.html:295
+#: templates/pdf/invoice.html:346
 #: templates/pdf/receipt.html:163
 #: templates/pdf/receipt.html:192
 msgid "NIF:"
 msgstr ""
 
-#: templates/pdf/invoice.html:280
+#: templates/pdf/invoice.html:296
 #: templates/pdf/receipt.html:164
 msgid "RC:"
 msgstr ""
 
-#: templates/pdf/invoice.html:281
+#: templates/pdf/invoice.html:297
 msgid "Legal form:"
 msgstr ""
 
-#: templates/pdf/invoice.html:282
+#: templates/pdf/invoice.html:298
 msgid "Sector:"
 msgstr ""
 
-#: templates/pdf/invoice.html:293
+#: templates/pdf/invoice.html:304
 #: templates/pdf/receipt.html:157
 msgid "Company logo"
 msgstr ""
 
-#: templates/pdf/invoice.html:295
+#: templates/pdf/invoice.html:310
 msgid "INVOICE"
 msgstr ""
 
-#: templates/pdf/invoice.html:310
+#: templates/pdf/invoice.html:331
 msgid "Customer Information"
 msgstr ""
 
-#: templates/pdf/invoice.html:312
+#: templates/pdf/invoice.html:338
+msgid "Address:"
+msgstr ""
+
+#: templates/pdf/invoice.html:343
 msgid "SOCIETE"
 msgstr ""
 
-#: templates/pdf/invoice.html:313
+#: templates/pdf/invoice.html:344
 msgid "SOUMISE A LA TVA NON"
 msgstr ""
 
-#: templates/pdf/invoice.html:323
+#: templates/pdf/invoice.html:354
 msgid "Items"
 msgstr ""
 
-#: templates/pdf/invoice.html:330
+#: templates/pdf/invoice.html:361
 msgid "CODE"
 msgstr ""
 
-#: templates/pdf/invoice.html:331
+#: templates/pdf/invoice.html:362
 msgid "DESIGNATION"
 msgstr ""
 
-#: templates/pdf/invoice.html:332
+#: templates/pdf/invoice.html:363
 msgid "BATCH"
 msgstr ""
 
-#: templates/pdf/invoice.html:333
-msgid "UNIT"
-msgstr ""
-
-#: templates/pdf/invoice.html:334
-msgid "QTY"
-msgstr ""
-
-#: templates/pdf/invoice.html:335
-msgid "U.P. EXCL."
-msgstr ""
-
-#: templates/pdf/invoice.html:336
-msgid "TAX"
-msgstr ""
-
-#: templates/pdf/invoice.html:337
-msgid "U.P. INCL."
-msgstr ""
-
-#: templates/pdf/invoice.html:338
-msgid "TOTAL INCL."
-msgstr ""
-
-#: templates/pdf/invoice.html:360
-msgid "Summary"
-msgstr ""
-
 #: templates/pdf/invoice.html:364
-msgid "TOTAL A-EX BIF"
+msgid "EXPIRY"
 msgstr ""
 
 #: templates/pdf/invoice.html:365
-msgid "TOTAL B 18% BIF"
+msgid "UNIT"
 msgstr ""
 
 #: templates/pdf/invoice.html:366
-msgid "TOTAL C 0% BIF"
+msgid "QTY"
 msgstr ""
 
 #: templates/pdf/invoice.html:367
-msgid "TOTAL TAX B BIF"
+msgid "U.P. EXCL."
 msgstr ""
 
 #: templates/pdf/invoice.html:368
-msgid "TOTAL TAX BIF"
+msgid "TAX"
 msgstr ""
 
 #: templates/pdf/invoice.html:369
+msgid "U.P. INCL."
+msgstr ""
+
+#: templates/pdf/invoice.html:370
+msgid "TOTAL INCL."
+msgstr ""
+
+#: templates/pdf/invoice.html:395
+msgid "Summary"
+msgstr ""
+
+#: templates/pdf/invoice.html:399
+msgid "TOTAL A-EX BIF"
+msgstr ""
+
+#: templates/pdf/invoice.html:400
+msgid "TOTAL B 18% BIF"
+msgstr ""
+
+#: templates/pdf/invoice.html:401
+msgid "TOTAL C 0% BIF"
+msgstr ""
+
+#: templates/pdf/invoice.html:402
+msgid "TOTAL TAX B BIF"
+msgstr ""
+
+#: templates/pdf/invoice.html:403
+msgid "TOTAL TAX BIF"
+msgstr ""
+
+#: templates/pdf/invoice.html:404
 msgid "TOTAL BIF"
 msgstr ""
 
-#: templates/pdf/invoice.html:386
+#: templates/pdf/invoice.html:421
 #: templates/pdf/receipt.html:289
 msgid "Amount in words:"
 msgstr ""
 
-#: templates/pdf/invoice.html:393
+#: templates/pdf/invoice.html:428
 msgid "Bank Details"
 msgstr ""
 
-#: templates/pdf/invoice.html:401
+#: templates/pdf/invoice.html:436
 msgid "No bank account on file."
 msgstr ""
 
-#: templates/pdf/invoice.html:410
+#: templates/pdf/invoice.html:445
 msgid "Carrier"
 msgstr ""
 
-#: templates/pdf/invoice.html:414
+#: templates/pdf/invoice.html:449
 msgid "Recipient"
 msgstr ""
 
-#: templates/pdf/invoice.html:418
+#: templates/pdf/invoice.html:453
 msgid "Sender"
 msgstr ""
 
-#: templates/pdf/invoice.html:290
-msgid "Buja, On %(issue_date)s"
+#: templates/pdf/invoice.html:322
+msgid "Buja, On %(issue_date)s at %(issue_time)s"
 msgstr ""
 
-#: templates/pdf/invoice.html:304
+#: templates/pdf/invoice.html:325
 msgid "REF : CASH : %(total)s"
 msgstr ""
 
-#: templates/pdf/invoice.html:305
+#: templates/pdf/invoice.html:326
 msgid "SERVED BY %(cashier_name)s"
 msgstr ""
 

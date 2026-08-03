@@ -51,15 +51,24 @@ A wholesale pharmacy is not a shop. The difference matters, and it shapes the wh
 | A retail shop | This wholesale business |
 |---|---|
 | Sells single boxes to patients | Sells cartons to pharmacies, hospitals, clinics, and NGOs |
-| Customer pays now | Customer often pays in 30, 45, or 60 days |
 | Nobody tracks which box went to whom | Every unit must be traceable back to its production batch |
-| One till, one till roll | Formal invoices with legal numbering for the tax authority |
+| One till, one till roll | Formal documents with legal numbering for the tax authority |
 
-Because of this, the system does five jobs:
+**Selling is not one thing.** Some customers settle at the counter; others are on account and pay in 30, 45, or 60 days. The system handles both, and which one you are doing decides what the customer walks away with:
+
+| | **Cash sale** | **Credit sale** |
+|---|---|---|
+| When the customer pays | Now, at the counter | Later, on agreed terms |
+| What they are given | A **receipt** | An **invoice** |
+| What it leaves behind | Nothing owing | An open balance, settled by a payment later |
+
+A cash sale is not invoiced and a credit sale is not receipted — a sale produces one closing document, not two, so it is never counted twice in the reports. The exception is a cash customer who asks for an invoice anyway, or a tax rule that requires one: the invoice is then raised from the same sale and linked to the receipt, so the pair still reconciles. See section 11.1.
+
+Because of all this, the system does five jobs:
 
 1. **Keeps the product list** (the catalogue): what you sell, at what price.
 2. **Tracks stock by batch**. Not just "we have 500 boxes", but "we have 200 from batch A which expires in March and 300 from batch B which expires in September".
-3. **Handles selling**, from picking products for a customer, to producing the invoice, to collecting the money.
+3. **Handles selling**, from picking products for a customer, to producing the receipt or invoice, to collecting the money.
 4. **Handles buying**, from raising an order with a supplier, to getting it approved, to receiving the goods into stock.
 5. **Records everything permanently**, so that if a regulator, an auditor, or the tax office asks a question, there is a complete and unchangeable answer.
 

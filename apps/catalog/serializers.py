@@ -250,6 +250,35 @@ class PriceHistorySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class MedicineImportSerializer(serializers.Serializer):
+    """Upload payload for the bulk catalogue import."""
+
+    # 10 MB. An .xlsx of 5 000 catalogue rows is well under 1 MB, so anything
+    # above this is a file with embedded images or the wrong file entirely, and
+    # rejecting it early keeps a bad upload from occupying a worker.
+    MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+    ALLOWED_SUFFIXES = (".xlsx", ".xlsm", ".csv", ".txt")
+
+    file = serializers.FileField()
+    # Defaults to a preview. An import that wrote on the first call would make
+    # the destructive path the easy one to reach by accident.
+    dry_run = serializers.BooleanField(default=True)
+
+    def validate_file(self, value):
+        name = (value.name or "").lower()
+        if not name.endswith(self.ALLOWED_SUFFIXES):
+            raise serializers.ValidationError(
+                _("Upload an Excel (.xlsx) or CSV file. Received: %(name)s.")
+                % {"name": value.name}
+            )
+        if value.size and value.size > self.MAX_UPLOAD_BYTES:
+            raise serializers.ValidationError(
+                _("The file is too large. The maximum size is %(size)s MB.")
+                % {"size": self.MAX_UPLOAD_BYTES // (1024 * 1024)}
+            )
+        return value
+
+
 class PriceChangeSerializer(serializers.Serializer):
     """Payload for the explicit price-change action."""
 
