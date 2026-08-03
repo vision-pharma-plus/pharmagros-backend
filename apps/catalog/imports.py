@@ -557,11 +557,11 @@ def parse_workbook(upload, *, language: str = "fr") -> ImportReport:
         # +2: one for the header row, one because Excel numbers from 1.
         row_number = offset + 2
 
-        def cell(key: str) -> str:
+        def cell(key: str, row: list = raw_row) -> str:
             index = positions.get(key)
-            if index is None or index >= len(raw_row):
+            if index is None or index >= len(row):
                 return ""
-            return raw_row[index]
+            return row[index]
 
         # A trailing run of blank rows is normal in a hand-edited sheet and is
         # silently skipped; a row with any content at all is validated.
@@ -572,8 +572,8 @@ def parse_workbook(upload, *, language: str = "fr") -> ImportReport:
         errors = result.errors
         data = result.data
 
-        def add_error(key: str, message: str) -> None:
-            errors.setdefault(key, []).append(message)
+        def add_error(key: str, message: str, err_dict: dict = errors) -> None:
+            err_dict.setdefault(key, []).append(message)
 
         # --- Text columns -------------------------------------------------
         for key in (

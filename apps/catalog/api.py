@@ -1,6 +1,6 @@
-from django_filters import rest_framework as filters
 from django.http import HttpResponse
 from django.utils.translation import gettext as _
+from django_filters import rest_framework as filters
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import viewsets
 from rest_framework.decorators import action
