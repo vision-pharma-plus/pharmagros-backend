@@ -4,8 +4,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pharmagros 1.0\n"
-"POT-Creation-Date: 2026-08-03 04:33+0000\n"
-"PO-Revision-Date: 2026-08-03 04:33+0000\n"
+"POT-Creation-Date: 2026-08-03 17:10+0000\n"
+"PO-Revision-Date: 2026-08-03 17:10+0000\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -101,7 +101,7 @@ msgstr "Audit et conformité"
 #: apps/catalog/models.py:47
 #: apps/catalog/models.py:107
 #: apps/catalog/models.py:134
-#: apps/inventory/models.py:43
+#: apps/inventory/models.py:44
 msgid "code"
 msgstr "code"
 
@@ -109,7 +109,7 @@ msgstr "code"
 #: apps/accounts/models.py:85
 #: apps/catalog/models.py:48
 #: apps/catalog/models.py:135
-#: apps/inventory/models.py:47
+#: apps/inventory/models.py:48
 msgid "name (French)"
 msgstr "nom (français)"
 
@@ -117,7 +117,7 @@ msgstr "nom (français)"
 #: apps/accounts/models.py:86
 #: apps/catalog/models.py:49
 #: apps/catalog/models.py:136
-#: apps/inventory/models.py:48
+#: apps/inventory/models.py:49
 msgid "name (English)"
 msgstr "nom (anglais)"
 
@@ -159,7 +159,7 @@ msgstr "rôle système"
 #: apps/catalog/models.py:56
 #: apps/catalog/models.py:113
 #: apps/catalog/models.py:145
-#: apps/inventory/models.py:52
+#: apps/inventory/models.py:53
 msgid "active"
 msgstr "actif"
 
@@ -309,9 +309,96 @@ msgstr "Le mot de passe doit contenir %(requirements)s."
 msgid "This password was used recently. Choose a password you have not used in your last %(n)d passwords."
 msgstr "Ce mot de passe a été utilisé récemment. Choisissez un mot de passe que vous n'avez pas utilisé parmi vos %(n)d derniers."
 
+#: apps/catalog/api.py:314
+msgid "Nothing was imported: %(count)s row(s) contain errors. Correct them and upload the file again."
+msgstr ""
+
 #: apps/catalog/apps.py:8
 msgid "Catalogue des médicaments"
 msgstr "Catalogue des médicaments"
+
+#: apps/catalog/imports.py:511
+msgid "The file is empty."
+msgstr ""
+
+#: apps/catalog/imports.py:769
+msgid "The file contains no data rows."
+msgstr ""
+
+#: apps/catalog/imports.py:530
+msgid "These required columns are missing from the file: %(columns)s. Download the template to get the expected layout."
+msgstr ""
+
+#: apps/catalog/imports.py:537
+msgid "The file contains %(count)s rows, more than the %(max)s allowed in one import. Split it into several files."
+msgstr ""
+
+#: apps/catalog/imports.py:505
+msgid "The file could not be read. Check that it is a valid .xlsx or .csv file. (%(detail)s)"
+msgstr ""
+
+#: apps/catalog/imports.py:588
+#: apps/catalog/imports.py:616
+#: apps/catalog/imports.py:630
+msgid "This field is required."
+msgstr ""
+
+#: apps/catalog/imports.py:702
+msgid "The maximum stock level must be above the reorder level."
+msgstr ""
+
+#: apps/catalog/imports.py:809
+msgid "Catalogue import"
+msgstr ""
+
+#: apps/catalog/imports.py:671
+#: apps/catalog/imports.py:686
+msgid "This value cannot be negative."
+msgstr ""
+
+#: apps/catalog/imports.py:596
+msgid "'%(value)s' is not a valid dosage form. Accepted codes: %(codes)s."
+msgstr ""
+
+#: apps/catalog/imports.py:607
+msgid "'%(value)s' is not a valid storage condition. Accepted codes: %(codes)s."
+msgstr ""
+
+#: apps/catalog/imports.py:622
+msgid "No category has the code '%(code)s'. Create it first, or correct the code."
+msgstr ""
+
+#: apps/catalog/imports.py:636
+msgid "No unit has the code '%(code)s'. Create it first, or correct the code."
+msgstr ""
+
+#: apps/catalog/imports.py:650
+msgid "No manufacturer has the code '%(code)s'."
+msgstr ""
+
+#: apps/catalog/imports.py:715
+msgid "'%(value)s' is not recognised. Use YES or NO."
+msgstr ""
+
+#: apps/catalog/imports.py:730
+msgid "This product code is already used on row %(row)s of this file."
+msgstr ""
+
+#: apps/catalog/imports.py:746
+msgid "This barcode is already used on row %(row)s of this file."
+msgstr ""
+
+#: apps/catalog/imports.py:763
+msgid "Another product already uses this barcode."
+msgstr ""
+
+#: apps/catalog/imports.py:667
+msgid "'%(value)s' is not a number."
+msgstr ""
+
+#: apps/catalog/imports.py:682
+msgid "'%(value)s' is not a whole number of days."
+msgstr ""
 
 #: apps/catalog/models.py:59
 #: apps/catalog/models.py:232
@@ -467,7 +554,7 @@ msgid "Keep dry"
 msgstr "Conserver au sec"
 
 #: apps/catalog/models.py:191
-#: apps/inventory/models.py:90
+#: apps/inventory/models.py:91
 #: apps/partners/models.py:66
 msgid "Active"
 msgstr "Actif"
@@ -595,7 +682,7 @@ msgid "barcode"
 msgstr "code-barres"
 
 #: apps/catalog/models.py:302
-#: apps/inventory/models.py:146
+#: apps/inventory/models.py:147
 #: apps/invoicing/models.py:109
 #: apps/partners/models.py:133
 #: apps/partners/models.py:315
@@ -612,14 +699,14 @@ msgid "notes (English)"
 msgstr "notes (anglais)"
 
 #: apps/catalog/models.py:309
-#: apps/inventory/models.py:116
+#: apps/inventory/models.py:117
 #: apps/purchasing/models.py:288
 #: apps/sales/models.py:222
 msgid "batch number"
 msgstr "numéro de lot"
 
 #: apps/catalog/models.py:310
-#: apps/inventory/models.py:119
+#: apps/inventory/models.py:120
 #: apps/purchasing/models.py:290
 #: apps/sales/models.py:223
 #: tests/test_translations.py:38
@@ -654,7 +741,7 @@ msgid "new selling price"
 msgstr "nouveau prix de vente"
 
 #: apps/catalog/models.py:476
-#: apps/inventory/models.py:297
+#: apps/inventory/models.py:315
 #: apps/partners/models.py:379
 #: apps/sales/models.py:378
 msgid "reason"
@@ -727,6 +814,14 @@ msgstr ""
 
 #: apps/catalog/serializers.py:226
 msgid "The expiry date cannot be in the past."
+msgstr ""
+
+#: apps/catalog/serializers.py:271
+msgid "Upload an Excel (.xlsx) or CSV file. Received: %(name)s."
+msgstr ""
+
+#: apps/catalog/serializers.py:276
+msgid "The file is too large. The maximum size is %(size)s MB."
 msgstr ""
 
 #: apps/catalog/services.py:62
@@ -993,96 +1088,96 @@ msgstr "Le contenu du fichier ne correspond pas au type déclaré."
 msgid "Gestion des stocks"
 msgstr "Gestion des stocks"
 
-#: apps/inventory/models.py:49
+#: apps/inventory/models.py:50
 #: apps/partners/models.py:104
 #: apps/partners/models.py:291
 msgid "address"
 msgstr "adresse"
 
-#: apps/inventory/models.py:50
+#: apps/inventory/models.py:51
 #: apps/partners/models.py:105
 #: apps/partners/models.py:292
 msgid "city"
 msgstr "ville"
 
-#: apps/inventory/models.py:51
+#: apps/inventory/models.py:52
 msgid "default warehouse"
 msgstr "entrepôt par défaut"
 
-#: apps/inventory/models.py:55
+#: apps/inventory/models.py:56
 msgid "cold chain capable"
 msgstr "compatible chaîne du froid"
 
-#: apps/inventory/models.py:58
-#: apps/inventory/models.py:114
-#: apps/inventory/models.py:270
+#: apps/inventory/models.py:59
+#: apps/inventory/models.py:115
+#: apps/inventory/models.py:288
 #: apps/purchasing/models.py:236
 #: apps/sales/models.py:81
 msgid "warehouse"
 msgstr "entrepôt"
 
-#: apps/inventory/models.py:59
+#: apps/inventory/models.py:60
 msgid "warehouses"
 msgstr "entrepôts"
 
-#: apps/inventory/models.py:91
+#: apps/inventory/models.py:92
 msgid "Quarantined"
 msgstr "En quarantaine"
 
-#: apps/inventory/models.py:92
+#: apps/inventory/models.py:93
 msgid "Expired"
 msgstr "Périmé"
 
-#: apps/inventory/models.py:93
+#: apps/inventory/models.py:94
 msgid "Damaged"
 msgstr "Endommagé"
 
-#: apps/inventory/models.py:94
+#: apps/inventory/models.py:95
 msgid "Recalled"
 msgstr "Rappelé"
 
-#: apps/inventory/models.py:95
+#: apps/inventory/models.py:96
 msgid "Depleted"
 msgstr "Épuisé"
 
-#: apps/inventory/models.py:96
+#: apps/inventory/models.py:97
 msgid "Disposed"
 msgstr "Détruit"
 
-#: apps/inventory/models.py:118
+#: apps/inventory/models.py:119
 #: apps/purchasing/models.py:289
 msgid "manufacturing date"
 msgstr "date de fabrication"
 
-#: apps/inventory/models.py:130
+#: apps/inventory/models.py:131
 #: apps/purchasing/models.py:175
 #: apps/purchasing/models.py:292
 msgid "quantity received"
 msgstr "quantité reçue"
 
-#: apps/inventory/models.py:134
+#: apps/inventory/models.py:135
 msgid "quantity remaining"
 msgstr "quantité restante"
 
-#: apps/inventory/models.py:137
+#: apps/inventory/models.py:138
 msgid "quantity reserved"
 msgstr "quantité réservée"
 
-#: apps/inventory/models.py:139
+#: apps/inventory/models.py:140
 msgid "unit purchase cost"
 msgstr "coût d'achat unitaire"
 
-#: apps/inventory/models.py:141
+#: apps/inventory/models.py:142
 #: apps/purchasing/models.py:297
 msgid "landed unit cost"
 msgstr "coût de revient unitaire"
 
-#: apps/inventory/models.py:149
+#: apps/inventory/models.py:150
 msgid "received at"
 msgstr "reçu le"
 
-#: apps/inventory/models.py:150
-#: apps/inventory/models.py:298
+#: apps/inventory/models.py:151
+#: apps/inventory/models.py:316
 #: apps/invoicing/models.py:159
 #: apps/invoicing/models.py:408
 #: apps/partners/models.py:136
@@ -1090,128 +1185,128 @@ msgstr "reçu le"
 msgid "notes"
 msgstr "notes"
 
-#: apps/inventory/models.py:153
+#: apps/inventory/models.py:154
 #: tests/test_translations.py:39
 msgid "stock batch"
 msgstr "lot de stock"
 
-#: apps/inventory/models.py:154
+#: apps/inventory/models.py:155
 msgid "stock batches"
 msgstr "lots de stock"
 
-#: apps/inventory/models.py:228
+#: apps/inventory/models.py:246
 msgid "Goods receipt"
 msgstr "Réception de marchandises"
 
-#: apps/inventory/models.py:229
+#: apps/inventory/models.py:247
 msgid "Sales issue"
 msgstr "Sortie pour vente"
 
-#: apps/inventory/models.py:230
+#: apps/inventory/models.py:248
 msgid "Customer return"
 msgstr "Retour client"
 
-#: apps/inventory/models.py:231
+#: apps/inventory/models.py:249
 msgid "Return to supplier"
 msgstr "Retour fournisseur"
 
-#: apps/inventory/models.py:232
+#: apps/inventory/models.py:250
 msgid "Transfer out"
 msgstr "Transfert sortant"
 
-#: apps/inventory/models.py:233
+#: apps/inventory/models.py:251
 msgid "Transfer in"
 msgstr "Transfert entrant"
 
-#: apps/inventory/models.py:234
+#: apps/inventory/models.py:252
 msgid "Positive adjustment"
 msgstr "Ajustement positif"
 
-#: apps/inventory/models.py:235
+#: apps/inventory/models.py:253
 msgid "Negative adjustment"
 msgstr "Ajustement négatif"
 
-#: apps/inventory/models.py:236
+#: apps/inventory/models.py:254
 msgid "Damage write-off"
 msgstr "Sortie pour dommage"
 
-#: apps/inventory/models.py:237
+#: apps/inventory/models.py:255
 msgid "Expiry write-off"
 msgstr "Sortie pour péremption"
 
-#: apps/inventory/models.py:238
+#: apps/inventory/models.py:256
 msgid "Disposal"
 msgstr "Destruction"
 
-#: apps/inventory/models.py:239
+#: apps/inventory/models.py:257
 msgid "Opening balance"
 msgstr "Solde d'ouverture"
 
-#: apps/inventory/models.py:274
+#: apps/inventory/models.py:292
 msgid "movement type"
 msgstr "type de mouvement"
 
-#: apps/inventory/models.py:279
+#: apps/inventory/models.py:297
 msgid "quantity change"
 msgstr "variation de quantité"
 
-#: apps/inventory/models.py:280
+#: apps/inventory/models.py:298
 msgid "batch balance after movement"
 msgstr "solde du lot après mouvement"
 
-#: apps/inventory/models.py:282
+#: apps/inventory/models.py:300
 msgid "unit cost at movement"
 msgstr "coût unitaire au mouvement"
 
-#: apps/inventory/models.py:283
+#: apps/inventory/models.py:301
 msgid "movement value"
 msgstr "valeur du mouvement"
 
-#: apps/inventory/models.py:288
+#: apps/inventory/models.py:306
 msgid "source document type"
 msgstr "type de document source"
 
-#: apps/inventory/models.py:289
+#: apps/inventory/models.py:307
 msgid "source document id"
 msgstr "identifiant du document source"
 
-#: apps/inventory/models.py:290
+#: apps/inventory/models.py:308
 msgid "source reference"
 msgstr "référence source"
 
-#: apps/inventory/models.py:296
+#: apps/inventory/models.py:314
 msgid "performed at"
 msgstr "effectué le"
 
-#: apps/inventory/models.py:301
+#: apps/inventory/models.py:319
 msgid "stock movement"
 msgstr "mouvement de stock"
 
-#: apps/inventory/models.py:302
+#: apps/inventory/models.py:320
 msgid "stock movements"
 msgstr "mouvements de stock"
 
-#: apps/inventory/models.py:338
+#: apps/inventory/models.py:356
 #: apps/invoicing/models.py:344
 #: apps/sales/models.py:169
 #: apps/sales/models.py:224
 msgid "quantity"
 msgstr "quantité"
 
-#: apps/inventory/models.py:341
+#: apps/inventory/models.py:359
 msgid "expires at"
 msgstr "expire le"
 
-#: apps/inventory/models.py:345
+#: apps/inventory/models.py:363
 msgid "stock reservation"
 msgstr "réservation de stock"
 
-#: apps/inventory/models.py:346
+#: apps/inventory/models.py:364
 msgid "stock reservations"
 msgstr "réservations de stock"
 
-#: apps/inventory/models.py:111
-#: apps/inventory/models.py:267
+#: apps/inventory/models.py:112
+#: apps/inventory/models.py:285
 #: apps/invoicing/models.py:334
 #: apps/purchasing/models.py:171
 #: apps/purchasing/models.py:281
@@ -1219,13 +1314,13 @@ msgstr "réservations de stock"
 msgid "product"
 msgstr "produit"
 
-#: apps/inventory/models.py:123
+#: apps/inventory/models.py:124
 #: apps/partners/models.py:326
 #: apps/purchasing/models.py:54
 msgid "supplier"
 msgstr "fournisseur"
 
-#: apps/inventory/models.py:127
+#: apps/inventory/models.py:128
 #: apps/purchasing/models.py:106
 #: apps/purchasing/models.py:166
 #: apps/purchasing/models.py:232
@@ -1233,17 +1328,17 @@ msgstr "fournisseur"
 msgid "purchase order"
 msgstr "bon de commande"
 
-#: apps/inventory/models.py:142
+#: apps/inventory/models.py:143
 msgid "Unit cost including freight, duty and clearing charges."
 msgstr "Coût unitaire incluant le fret, les droits de douane et les frais de dédouanement."
 
-#: apps/inventory/models.py:263
+#: apps/inventory/models.py:281
 #: apps/sales/models.py:220
 #: apps/sales/models.py:411
 msgid "batch"
 msgstr "lot"
 
-#: apps/inventory/models.py:294
+#: apps/inventory/models.py:312
 msgid "performed by"
 msgstr "effectué par"
 
@@ -1497,11 +1592,13 @@ msgid "document type"
 msgstr "type de document"
 
 #: apps/invoicing/models.py:137
+#: apps/invoicing/models.py:506
 #: apps/sales/models.py:279
 msgid "customer name"
 msgstr "nom du client"
 
 #: apps/invoicing/models.py:138
+#: apps/invoicing/models.py:507
 #: apps/sales/models.py:280
 msgid "customer NIF"
 msgstr "NIF du client"
@@ -1588,12 +1685,14 @@ msgid "posted at"
 msgstr "validée le"
 
 #: apps/invoicing/models.py:171
+#: apps/invoicing/models.py:527
 #: apps/sales/models.py:118
 #: apps/sales/models.py:305
 msgid "cancelled at"
 msgstr "annulée le"
 
 #: apps/invoicing/models.py:176
+#: apps/invoicing/models.py:528
 #: apps/purchasing/models.py:101
 #: apps/sales/models.py:119
 #: apps/sales/models.py:306
@@ -1601,16 +1700,19 @@ msgid "cancellation reason"
 msgstr "motif d'annulation"
 
 #: apps/invoicing/models.py:181
+#: apps/invoicing/models.py:524
 #: apps/sales/models.py:302
 msgid "times printed"
 msgstr "nombre d'impressions"
 
 #: apps/invoicing/models.py:182
+#: apps/invoicing/models.py:525
 #: apps/sales/models.py:303
 msgid "last printed"
 msgstr "dernière impression"
 
 #: apps/invoicing/models.py:183
+#: apps/invoicing/models.py:523
 #: apps/notifications/models.py:81
 msgid "emailed at"
 msgstr "envoyée par e-mail le"
@@ -1658,9 +1760,9 @@ msgstr ""
 #: apps/invoicing/models.py:228
 #: apps/invoicing/models.py:328
 #: apps/invoicing/models.py:444
-#: apps/invoicing/models.py:493
+#: apps/invoicing/models.py:496
+#: apps/invoicing/models.py:580
 #: tests/test_rbac_and_api.py:491
-#: tests/test_rbac_and_api.py:523
 msgid "invoice"
 msgstr "facture"
 
@@ -1779,65 +1881,84 @@ msgstr "affectation de paiement"
 msgid "payment allocations"
 msgstr "affectations de paiement"
 
-#: apps/invoicing/models.py:471
+#: apps/invoicing/models.py:492
+#: apps/purchasing/models.py:228
+#: apps/sales/models.py:265
+msgid "receipt number"
+msgstr "numéro de réception"
+
+#: apps/invoicing/models.py:509
+#: apps/sales/models.py:282
+msgid "issued at"
+msgstr ""
+
+#: apps/invoicing/models.py:531
+msgid "payment receipt"
+msgstr ""
+
+#: apps/invoicing/models.py:532
+msgid "payment receipts"
+msgstr ""
+
+#: apps/invoicing/models.py:558
 msgid "In flight"
 msgstr ""
 
-#: apps/invoicing/models.py:472
+#: apps/invoicing/models.py:559
 msgid "Succeeded"
 msgstr ""
 
-#: apps/invoicing/models.py:473
+#: apps/invoicing/models.py:560
 msgid "Failed"
 msgstr ""
 
-#: apps/invoicing/models.py:495
+#: apps/invoicing/models.py:582
 msgid "operation"
 msgstr ""
 
-#: apps/invoicing/models.py:496
+#: apps/invoicing/models.py:583
 msgid "endpoint"
 msgstr ""
 
-#: apps/invoicing/models.py:498
+#: apps/invoicing/models.py:585
 msgid "request body"
 msgstr ""
 
-#: apps/invoicing/models.py:499
+#: apps/invoicing/models.py:586
 msgid "response body"
 msgstr ""
 
-#: apps/invoicing/models.py:500
+#: apps/invoicing/models.py:587
 msgid "HTTP status"
 msgstr ""
 
-#: apps/invoicing/models.py:502
+#: apps/invoicing/models.py:589
 msgid "outcome"
 msgstr ""
 
-#: apps/invoicing/models.py:505
+#: apps/invoicing/models.py:592
 msgid "error"
 msgstr ""
 
-#: apps/invoicing/models.py:507
+#: apps/invoicing/models.py:594
 msgid "started at"
 msgstr ""
 
-#: apps/invoicing/models.py:508
+#: apps/invoicing/models.py:595
 msgid "completed at"
 msgstr ""
 
-#: apps/invoicing/models.py:511
-#: apps/invoicing/models.py:512
+#: apps/invoicing/models.py:598
+#: apps/invoicing/models.py:599
 msgid "OBR request log"
 msgstr ""
 
 #: apps/invoicing/models.py:115
 #: apps/invoicing/models.py:391
+#: apps/invoicing/models.py:500
 #: apps/partners/models.py:141
 #: apps/partners/models.py:348
 #: apps/sales/models.py:77
-#: apps/sales/models.py:272
 msgid "customer"
 msgstr "client"
 
@@ -1889,112 +2010,165 @@ msgstr "Numéro de chèque, référence de virement ou code mobile money."
 msgid "received by"
 msgstr "reçu par"
 
-#: apps/invoicing/services.py:100
+#: apps/invoicing/models.py:512
+#: apps/sales/models.py:296
+msgid "issued by"
+msgstr ""
+
+#: apps/invoicing/models.py:520
+msgid "settling payment"
+msgstr ""
+
+#: apps/invoicing/services.py:101
 msgid "An invoice must contain at least one line."
 msgstr "Une facture doit contenir au moins une ligne."
 
-#: apps/invoicing/services.py:163
+#: apps/invoicing/services.py:164
 #: apps/sales/services.py:179
 msgid "Line quantities must be greater than zero."
 msgstr "Les quantités des lignes doivent être supérieures à zéro."
 
-#: apps/invoicing/services.py:167
+#: apps/invoicing/services.py:168
 msgid "Unit prices cannot be negative."
 msgstr "Les prix unitaires ne peuvent pas être négatifs."
 
-#: apps/invoicing/services.py:171
+#: apps/invoicing/services.py:172
 msgid "A discount must be between 0 and 100 percent."
 msgstr "Une remise doit être comprise entre 0 et 100 pour cent."
 
-#: apps/invoicing/services.py:222
+#: apps/invoicing/services.py:223
 msgid "An invoice cannot be posted without lines."
 msgstr "Une facture ne peut pas être validée sans lignes."
 
-#: apps/invoicing/services.py:228
+#: apps/invoicing/services.py:229
 msgid "A NIF is required to post a credit invoice."
 msgstr "Un NIF est obligatoire pour valider une facture à crédit."
 
-#: apps/invoicing/services.py:319
+#: apps/invoicing/services.py:326
 msgid "A reason is required to cancel an invoice."
 msgstr "Un motif est obligatoire pour annuler une facture."
 
-#: apps/invoicing/services.py:323
+#: apps/invoicing/services.py:330
 msgid "This invoice has already been cancelled."
 msgstr "Cette facture a déjà été annulée."
 
-#: apps/invoicing/services.py:405
+#: apps/invoicing/services.py:482
 msgid "A payment amount must be greater than zero."
 msgstr "Un montant de paiement doit être supérieur à zéro."
 
-#: apps/invoicing/services.py:494
+#: apps/invoicing/services.py:576
+msgid "This payment cannot be applied as requested. %(problems)s"
+msgstr ""
+
+#: apps/invoicing/services.py:812
+msgid "This payment has been reversed and cannot be allocated."
+msgstr ""
+
+#: apps/invoicing/services.py:871
 msgid "A reason is required to reverse a payment."
 msgstr "Un motif est obligatoire pour extourner un paiement."
 
-#: apps/invoicing/services.py:497
+#: apps/invoicing/services.py:879
 msgid "This payment has already been reversed."
 msgstr "Ce paiement a déjà été extourné."
 
-#: apps/invoicing/services.py:558
+#: apps/invoicing/services.py:965
 msgid "A reason is required to issue a credit note."
 msgstr "Un motif est obligatoire pour émettre une note de crédit."
 
-#: apps/invoicing/services.py:562
+#: apps/invoicing/services.py:969
 msgid "A credit note can only be issued against a posted invoice."
 msgstr "Une note de crédit ne peut être émise que sur une facture validée."
 
-#: apps/invoicing/services.py:569
+#: apps/invoicing/services.py:976
 msgid "A credit note cannot itself be credited."
 msgstr ""
 
-#: apps/invoicing/services.py:672
+#: apps/invoicing/services.py:1103
 msgid "Every line of a goods-return credit note must reference the sale line it was billed from."
 msgstr ""
 
-#: apps/invoicing/services.py:719
+#: apps/invoicing/services.py:1150
 msgid "The return was recorded but no credit note could be raised against this invoice."
 msgstr ""
 
-#: apps/invoicing/services.py:216
+#: apps/invoicing/services.py:217
 msgid "Only a draft invoice can be posted; this one is %(status)s."
 msgstr "Seule une facture en brouillon peut être validée ; celle-ci est %(status)s."
 
-#: apps/invoicing/services.py:276
+#: apps/invoicing/services.py:283
 msgid "Invoice %(number)s is %(status)s and can no longer be modified. Issue a credit note instead."
 msgstr "La facture %(number)s est %(status)s et ne peut plus être modifiée. Émettez plutôt une note de crédit."
 
-#: apps/invoicing/services.py:327
+#: apps/invoicing/services.py:334
 msgid "This invoice has received payments totalling %(paid)s BIF. Reverse them before cancelling."
 msgstr "Cette facture a reçu des paiements totalisant %(paid)s BIF. Extournez-les avant l'annulation."
 
-#: apps/invoicing/services.py:693
+#: apps/invoicing/services.py:819
+msgid "Payment %(reference)s is already fully allocated."
+msgstr ""
+
+#: apps/invoicing/services.py:830
+msgid "%(customer)s has no open invoices to allocate this payment to."
+msgstr ""
+
+#: apps/invoicing/services.py:555
+msgid "%(id)s: no such invoice."
+msgstr ""
+
+#: apps/invoicing/services.py:1011
+msgid "Credit note %(number)s applied to %(original)s"
+msgstr ""
+
+#: apps/invoicing/services.py:1124
 msgid "Sale line %(id)s does not belong to the invoice being credited."
+msgstr ""
+
+#: apps/invoicing/services.py:558
+msgid "%(number)s belongs to another customer."
+msgstr ""
+
+#: apps/invoicing/services.py:905
+msgid "Payment %(reference)s reversed: %(reason)s"
+msgstr ""
+
+#: apps/invoicing/services.py:563
+msgid "%(number)s is %(status)s and cannot take a payment."
+msgstr ""
+
+#: apps/invoicing/services.py:571
+msgid "%(number)s is already settled in full."
 msgstr ""
 
 #: apps/invoicing/tasks.py:32
 msgid "%(company)s : Invoice %(number)s"
 msgstr "%(company)s : Facture %(number)s"
 
-#: apps/invoicing/tasks.py:178
+#: apps/invoicing/tasks.py:84
+msgid "%(company)s : Payment receipt %(number)s"
+msgstr ""
+
+#: apps/invoicing/tasks.py:232
 msgid "These documents have exhausted their retry attempts and remain undeclared. Review them and resubmit once the cause is corrected."
 msgstr ""
 
-#: apps/invoicing/tasks.py:175
+#: apps/invoicing/tasks.py:229
 msgid "%(count)d invoices could not be declared to the OBR"
 msgstr ""
 
-#: apps/invoicing/tasks.py:246
+#: apps/invoicing/tasks.py:300
 msgid "Contact customers to arrange settlement."
 msgstr "Contactez les clients pour organiser le règlement."
 
-#: apps/invoicing/tasks.py:228
+#: apps/invoicing/tasks.py:282
 msgid "%(count)d overdue invoices"
 msgstr "%(count)d factures en retard"
 
-#: apps/invoicing/tasks.py:231
+#: apps/invoicing/tasks.py:285
 msgid "Total overdue: %(total)s BIF. Review the receivables ageing report."
 msgstr "Total en retard : %(total)s BIF. Consultez la balance âgée clients."
 
-#: apps/invoicing/tasks.py:244
+#: apps/invoicing/tasks.py:298
 msgid "%(count)d invoices due within 7 days"
 msgstr "%(count)d factures échéant dans les 7 jours"
 
@@ -2571,11 +2745,6 @@ msgstr "ligne de bon de commande"
 msgid "purchase order lines"
 msgstr "lignes de bon de commande"
 
-#: apps/purchasing/models.py:228
-#: apps/sales/models.py:265
-msgid "receipt number"
-msgstr "numéro de réception"
-
 #: apps/purchasing/models.py:238
 msgid "receipt date"
 msgstr "date de réception"
@@ -2739,286 +2908,286 @@ msgstr "Impossible de recevoir %(qty)s de %(product)s : seules %(max)s restent e
 msgid "Batch %(batch)s expires on %(actual)s, before the minimum acceptable date of %(expected)s for this line."
 msgstr "Le lot %(batch)s périme le %(actual)s, avant la date minimale acceptable du %(expected)s pour cette ligne."
 
-#: apps/reporting/api.py:269
-#: apps/reporting/api.py:566
+#: apps/reporting/api.py:296
+#: apps/reporting/api.py:593
 msgid "Date"
 msgstr "Date"
 
-#: apps/reporting/api.py:270
-#: apps/reporting/api.py:172
-#: apps/reporting/api.py:223
-#: apps/reporting/api.py:323
-#: apps/reporting/api.py:568
+#: apps/reporting/api.py:297
+#: apps/reporting/api.py:199
+#: apps/reporting/api.py:250
+#: apps/reporting/api.py:350
+#: apps/reporting/api.py:595
 #: tests/test_translations.py:96
 msgid "Product code"
 msgstr "Code produit"
 
-#: apps/reporting/api.py:271
-#: apps/reporting/api.py:173
-#: apps/reporting/api.py:224
-#: apps/reporting/api.py:324
-#: apps/reporting/api.py:569
+#: apps/reporting/api.py:298
+#: apps/reporting/api.py:200
+#: apps/reporting/api.py:251
+#: apps/reporting/api.py:351
+#: apps/reporting/api.py:596
 msgid "Product"
 msgstr "Produit"
 
-#: apps/reporting/api.py:272
-#: apps/reporting/api.py:176
-#: apps/reporting/api.py:225
-#: apps/reporting/api.py:325
-#: apps/reporting/api.py:570
+#: apps/reporting/api.py:299
+#: apps/reporting/api.py:203
+#: apps/reporting/api.py:252
+#: apps/reporting/api.py:352
+#: apps/reporting/api.py:597
 msgid "Batch"
 msgstr "Lot"
 
-#: apps/reporting/api.py:273
-#: apps/reporting/api.py:175
-#: apps/reporting/api.py:226
-#: apps/reporting/api.py:326
+#: apps/reporting/api.py:300
+#: apps/reporting/api.py:202
+#: apps/reporting/api.py:253
+#: apps/reporting/api.py:353
 msgid "Warehouse"
 msgstr "Entrepôt"
 
-#: apps/reporting/api.py:274
+#: apps/reporting/api.py:301
 msgid "Movement"
 msgstr "Mouvement"
 
-#: apps/reporting/api.py:275
-#: apps/reporting/api.py:179
-#: apps/reporting/api.py:230
-#: apps/reporting/api.py:327
-#: apps/reporting/api.py:572
+#: apps/reporting/api.py:302
+#: apps/reporting/api.py:206
+#: apps/reporting/api.py:257
+#: apps/reporting/api.py:354
+#: apps/reporting/api.py:599
 msgid "Quantity"
 msgstr "Quantité"
 
-#: apps/reporting/api.py:276
+#: apps/reporting/api.py:303
 msgid "Balance"
 msgstr "Solde"
 
-#: apps/reporting/api.py:277
-#: apps/reporting/api.py:181
-#: apps/reporting/api.py:328
-#: apps/reporting/api.py:573
+#: apps/reporting/api.py:304
+#: apps/reporting/api.py:208
+#: apps/reporting/api.py:355
+#: apps/reporting/api.py:600
 msgid "Value (BIF)"
 msgstr "Valeur (BIF)"
 
-#: apps/reporting/api.py:278
-#: apps/reporting/api.py:576
+#: apps/reporting/api.py:305
+#: apps/reporting/api.py:603
 #: templates/pdf/receipt.html:272
 msgid "Reference"
 msgstr "Référence"
 
-#: apps/reporting/api.py:279
-#: apps/reporting/api.py:575
+#: apps/reporting/api.py:306
+#: apps/reporting/api.py:602
 msgid "User"
 msgstr "Utilisateur"
 
-#: apps/reporting/api.py:380
+#: apps/reporting/api.py:407
 msgid "Period"
 msgstr "Période"
 
-#: apps/reporting/api.py:381
+#: apps/reporting/api.py:408
 msgid "Revenue (BIF)"
 msgstr "Chiffre d'affaires (BIF)"
 
-#: apps/reporting/api.py:382
+#: apps/reporting/api.py:409
 #: tests/test_translations.py:97
 msgid "VAT (BIF)"
 msgstr "TVA (BIF)"
 
-#: apps/reporting/api.py:383
-#: apps/reporting/api.py:478
+#: apps/reporting/api.py:410
+#: apps/reporting/api.py:505
 msgid "Net revenue (BIF)"
 msgstr "Chiffre d'affaires net (BIF)"
 
-#: apps/reporting/api.py:384
+#: apps/reporting/api.py:411
 msgid "Discounts (BIF)"
 msgstr "Remises (BIF)"
 
-#: apps/reporting/api.py:385
+#: apps/reporting/api.py:412
 msgid "Transactions"
 msgstr "Transactions"
 
-#: apps/reporting/api.py:174
+#: apps/reporting/api.py:201
 msgid "Category"
 msgstr "Catégorie"
 
-#: apps/reporting/api.py:177
-#: apps/reporting/api.py:228
-#: apps/reporting/api.py:329
-#: apps/reporting/api.py:571
+#: apps/reporting/api.py:204
+#: apps/reporting/api.py:255
+#: apps/reporting/api.py:356
+#: apps/reporting/api.py:598
 msgid "Expiry"
 msgstr "Péremption"
 
-#: apps/reporting/api.py:178
-#: apps/reporting/api.py:229
+#: apps/reporting/api.py:205
+#: apps/reporting/api.py:256
 msgid "Days to expiry"
 msgstr "Jours avant péremption"
 
-#: apps/reporting/api.py:180
+#: apps/reporting/api.py:207
 msgid "Unit cost (BIF)"
 msgstr "Coût unitaire (BIF)"
 
-#: apps/reporting/api.py:184
+#: apps/reporting/api.py:211
 msgid "Inventory valuation"
 msgstr "Valorisation du stock"
 
-#: apps/reporting/api.py:227
+#: apps/reporting/api.py:254
 msgid "Supplier"
 msgstr "Fournisseur"
 
-#: apps/reporting/api.py:231
+#: apps/reporting/api.py:258
 msgid "Value at risk (BIF)"
 msgstr "Valeur à risque (BIF)"
 
-#: apps/reporting/api.py:234
+#: apps/reporting/api.py:261
 msgid "Expiry report"
 msgstr "Rapport de péremption"
 
-#: apps/reporting/api.py:284
-#: apps/reporting/api.py:574
+#: apps/reporting/api.py:311
+#: apps/reporting/api.py:601
 msgid "Reason"
 msgstr "Motif"
 
-#: apps/reporting/api.py:290
+#: apps/reporting/api.py:317
 msgid "Stock movements"
 msgstr "Mouvements de stock"
 
-#: apps/reporting/api.py:330
+#: apps/reporting/api.py:357
 msgid "Received"
 msgstr "Reçu"
 
-#: apps/reporting/api.py:333
+#: apps/reporting/api.py:360
 msgid "Dead stock"
 msgstr "Stock dormant"
 
-#: apps/reporting/api.py:394
+#: apps/reporting/api.py:421
 msgid "Sales report"
 msgstr "Rapport de ventes"
 
-#: apps/reporting/api.py:422
+#: apps/reporting/api.py:449
 msgid "Customer code"
 msgstr "Code client"
 
-#: apps/reporting/api.py:423
+#: apps/reporting/api.py:450
 msgid "Customer"
 msgstr "Client"
 
-#: apps/reporting/api.py:424
+#: apps/reporting/api.py:451
 msgid "Credit limit (BIF)"
 msgstr "Limite de crédit (BIF)"
 
-#: apps/reporting/api.py:425
+#: apps/reporting/api.py:452
 msgid "Not yet due (BIF)"
 msgstr "Non échu (BIF)"
 
-#: apps/reporting/api.py:426
+#: apps/reporting/api.py:453
 msgid "1–30 days (BIF)"
 msgstr "1–30 jours (BIF)"
 
-#: apps/reporting/api.py:427
+#: apps/reporting/api.py:454
 msgid "31–60 days (BIF)"
 msgstr "31–60 jours (BIF)"
 
-#: apps/reporting/api.py:428
+#: apps/reporting/api.py:455
 msgid "61–90 days (BIF)"
 msgstr "61–90 jours (BIF)"
 
-#: apps/reporting/api.py:429
+#: apps/reporting/api.py:456
 #: tests/test_translations.py:98
 msgid "Over 90 days (BIF)"
 msgstr "Plus de 90 jours (BIF)"
 
-#: apps/reporting/api.py:430
+#: apps/reporting/api.py:457
 msgid "Total (BIF)"
 msgstr "Total (BIF)"
 
-#: apps/reporting/api.py:433
+#: apps/reporting/api.py:460
 msgid "Receivables ageing"
 msgstr "Balance âgée clients"
 
-#: apps/reporting/api.py:476
+#: apps/reporting/api.py:503
 msgid "Gross revenue (BIF)"
 msgstr "Chiffre d'affaires brut (BIF)"
 
-#: apps/reporting/api.py:477
+#: apps/reporting/api.py:504
 msgid "VAT collected (BIF)"
 msgstr "TVA collectée (BIF)"
 
-#: apps/reporting/api.py:479
+#: apps/reporting/api.py:506
 msgid "Cost of goods sold (BIF)"
 msgstr "Coût des marchandises vendues (BIF)"
 
-#: apps/reporting/api.py:480
+#: apps/reporting/api.py:507
 msgid "Gross profit (BIF)"
 msgstr "Marge brute (BIF)"
 
-#: apps/reporting/api.py:481
+#: apps/reporting/api.py:508
 msgid "Gross margin (%)"
 msgstr "Taux de marge brute (%)"
 
-#: apps/reporting/api.py:482
+#: apps/reporting/api.py:509
 msgid "Discounts granted (BIF)"
 msgstr "Remises accordées (BIF)"
 
-#: apps/reporting/api.py:487
+#: apps/reporting/api.py:514
 msgid "Item"
 msgstr "Poste"
 
-#: apps/reporting/api.py:487
+#: apps/reporting/api.py:514
 msgid "Amount"
 msgstr "Montant"
 
-#: apps/reporting/api.py:489
+#: apps/reporting/api.py:516
 msgid "Gross trading result"
 msgstr "Résultat brut"
 
-#: apps/reporting/api.py:567
+#: apps/reporting/api.py:594
 msgid "Type"
 msgstr "Type"
 
-#: apps/reporting/api.py:579
+#: apps/reporting/api.py:606
 msgid "Compliance report"
 msgstr "Rapport de conformité"
 
-#: apps/reporting/api.py:186
+#: apps/reporting/api.py:213
 msgid "Total value"
 msgstr "Valeur totale"
 
-#: apps/reporting/api.py:187
+#: apps/reporting/api.py:214
 msgid "Batches"
 msgstr "Lots"
 
-#: apps/reporting/api.py:236
+#: apps/reporting/api.py:263
 msgid "Horizon (days)"
 msgstr "Horizon (jours)"
 
-#: apps/reporting/api.py:237
+#: apps/reporting/api.py:264
 msgid "Total value at risk"
 msgstr "Valeur totale à risque"
 
-#: apps/reporting/api.py:389
+#: apps/reporting/api.py:416
 msgid "Cost (BIF)"
 msgstr "Coût (BIF)"
 
-#: apps/reporting/api.py:389
+#: apps/reporting/api.py:416
 msgid "Margin (BIF)"
 msgstr "Marge (BIF)"
 
-#: apps/reporting/api.py:434
+#: apps/reporting/api.py:461
 msgid "Total outstanding"
 msgstr "Encours total"
 
-#: apps/reporting/api.py:491
+#: apps/reporting/api.py:518
 msgid "From"
 msgstr "Du"
 
-#: apps/reporting/api.py:492
+#: apps/reporting/api.py:519
 msgid "To"
 msgstr "Au"
 
-#: apps/reporting/api.py:493
+#: apps/reporting/api.py:520
 msgid "Note"
 msgstr "Note"
 
-#: apps/reporting/api.py:494
+#: apps/reporting/api.py:521
 msgid "Gross margin only; operating expenses are not tracked."
 msgstr "Marge brute uniquement ; les charges d'exploitation ne sont pas suivies."
 
@@ -3129,10 +3298,6 @@ msgstr "affectation de lot sur ligne de vente"
 msgid "sale line batch allocations"
 msgstr "affectations de lots sur lignes de vente"
 
-#: apps/sales/models.py:282
-msgid "issued at"
-msgstr ""
-
 #: apps/sales/models.py:291
 msgid "amount tendered"
 msgstr ""
@@ -3199,10 +3364,6 @@ msgstr "dérogation de crédit autorisée par"
 
 #: apps/sales/models.py:289
 msgid "Mobile money code, card authorisation or transfer reference."
-msgstr ""
-
-#: apps/sales/models.py:296
-msgid "issued by"
 msgstr ""
 
 #: apps/sales/models.py:371
@@ -3295,20 +3456,94 @@ msgstr ""
 msgid "Cannot return %(qty)s of %(product)s: only %(max)s remain returnable on this line."
 msgstr "Impossible de retourner %(qty)s de %(product)s : seules %(max)s restent retournables sur cette ligne."
 
+#: templates/emails/invoice.html:11
+#: templates/emails/invoice.txt:5
+#: templates/emails/payment_receipt.html:17
+#: templates/emails/payment_receipt.txt:6
+msgid "Invoice:"
+msgstr "Facture :"
+
+#: templates/emails/invoice.html:15
+#: templates/emails/invoice.txt:6
+#: templates/emails/payment_receipt.html:21
+#: templates/emails/payment_receipt.txt:7
+#: templates/pdf/receipt.html:183
+msgid "Date:"
+msgstr "Date :"
+
+#: templates/emails/invoice.html:20
+#: templates/emails/invoice.txt:7
+msgid "Due date:"
+msgstr "Échéance :"
+
+#: templates/emails/invoice.html:25
+#: templates/emails/invoice.txt:8
+msgid "Total:"
+msgstr "Total :"
+
+#: templates/emails/invoice.html:29
+#: templates/emails/invoice.txt:9
+msgid "Balance due:"
+msgstr "Solde dû :"
+
+#: templates/emails/invoice.html:35
+#: templates/emails/invoice.txt:11
+#: templates/emails/payment_receipt.html:33
+#: templates/emails/payment_receipt.txt:12
+msgid "Kind regards,"
+msgstr "Cordialement,"
+
+#: templates/emails/invoice.html:37
+#: templates/emails/invoice.txt:13
+#: templates/emails/payment_receipt.html:35
+#: templates/emails/payment_receipt.txt:14
+#: templates/pdf/invoice.html:292
+#: templates/pdf/invoice.html:341
+msgid "TEL:"
+msgstr "TEL :"
+
+#: templates/emails/invoice.html:5
+#: templates/emails/invoice.txt:1
+#: templates/emails/payment_receipt.html:5
+#: templates/emails/payment_receipt.txt:1
+msgid "Dear %(name)s,"
+msgstr "Bonjour %(name)s,"
+
+#: templates/emails/invoice.html:7
+#: templates/emails/invoice.txt:3
+msgid "Please find invoice %(number)s attached."
+msgstr "Veuillez trouver ci-joint la facture %(number)s."
+
+#: templates/emails/payment_receipt.html:13
+#: templates/emails/payment_receipt.txt:5
+msgid "Receipt number:"
+msgstr "Numéro de reçu :"
+
+#: templates/emails/payment_receipt.html:25
+#: templates/emails/payment_receipt.txt:8
+msgid "Amount received:"
+msgstr "Montant reçu :"
+
+#: templates/emails/payment_receipt.html:30
+#: templates/emails/payment_receipt.txt:10
+msgid "Your receipt is attached to this message."
+msgstr "Votre reçu est joint à ce message."
+
+#: templates/emails/payment_receipt.html:8
+#: templates/emails/payment_receipt.txt:3
+msgid "Thank you — we confirm that invoice %(number)s has been settled in full."
+msgstr "Merci — nous confirmons que la facture %(number)s a été intégralement réglée."
+
 #: templates/pdf/invoice.html:16
+#: templates/pdf/payment_receipt.html:15
 #: templates/pdf/report.html:16
 msgid "Page"
 msgstr "Page"
 
 #: templates/pdf/invoice.html:16
+#: templates/pdf/payment_receipt.html:15
 msgid "of"
 msgstr "sur"
-
-#: templates/pdf/invoice.html:292
-#: templates/pdf/invoice.html:341
-#: templates/pdf/receipt.html:162
-msgid "TEL:"
-msgstr "TEL :"
 
 #: templates/pdf/invoice.html:293
 msgid "Tax centre:"
@@ -3316,12 +3551,15 @@ msgstr "Centre fiscal :"
 
 #: templates/pdf/invoice.html:295
 #: templates/pdf/invoice.html:346
+#: templates/pdf/payment_receipt.html:138
+#: templates/pdf/payment_receipt.html:175
 #: templates/pdf/receipt.html:163
 #: templates/pdf/receipt.html:192
 msgid "NIF:"
 msgstr "NIF :"
 
 #: templates/pdf/invoice.html:296
+#: templates/pdf/payment_receipt.html:139
 #: templates/pdf/receipt.html:164
 msgid "RC:"
 msgstr "RC :"
@@ -3335,6 +3573,7 @@ msgid "Sector:"
 msgstr "Secteur :"
 
 #: templates/pdf/invoice.html:304
+#: templates/pdf/payment_receipt.html:144
 #: templates/pdf/receipt.html:157
 msgid "Company logo"
 msgstr "Logo de la société"
@@ -3403,56 +3642,56 @@ msgstr "P.U. TTC"
 msgid "TOTAL INCL."
 msgstr "P.T. TTC"
 
-#: templates/pdf/invoice.html:395
+#: templates/pdf/invoice.html:396
 msgid "Summary"
 msgstr "Récapitulatif"
 
-#: templates/pdf/invoice.html:399
+#: templates/pdf/invoice.html:400
 msgid "TOTAL A-EX BIF"
 msgstr "TOTAL A-EX BIF"
 
-#: templates/pdf/invoice.html:400
+#: templates/pdf/invoice.html:401
 msgid "TOTAL B 18% BIF"
 msgstr "TOTAL B 18% BIF"
 
-#: templates/pdf/invoice.html:401
+#: templates/pdf/invoice.html:402
 msgid "TOTAL C 0% BIF"
 msgstr "TOTAL C 0% BIF"
 
-#: templates/pdf/invoice.html:402
+#: templates/pdf/invoice.html:403
 msgid "TOTAL TAX B BIF"
 msgstr "TOTAL TAXE B BIF"
 
-#: templates/pdf/invoice.html:403
+#: templates/pdf/invoice.html:404
 msgid "TOTAL TAX BIF"
 msgstr "TOTAL TAXE BIF"
 
-#: templates/pdf/invoice.html:404
+#: templates/pdf/invoice.html:405
 msgid "TOTAL BIF"
 msgstr "TOTAL BIF"
 
-#: templates/pdf/invoice.html:421
+#: templates/pdf/invoice.html:422
 #: templates/pdf/receipt.html:289
 msgid "Amount in words:"
 msgstr "Arrêté à la somme de :"
 
-#: templates/pdf/invoice.html:428
+#: templates/pdf/invoice.html:429
 msgid "Bank Details"
 msgstr "Coordonnées bancaires"
 
-#: templates/pdf/invoice.html:436
+#: templates/pdf/invoice.html:437
 msgid "No bank account on file."
 msgstr "Aucun compte bancaire enregistré."
 
-#: templates/pdf/invoice.html:445
+#: templates/pdf/invoice.html:446
 msgid "Carrier"
 msgstr "Transporteur"
 
-#: templates/pdf/invoice.html:449
+#: templates/pdf/invoice.html:450
 msgid "Recipient"
 msgstr "Destinataire"
 
-#: templates/pdf/invoice.html:453
+#: templates/pdf/invoice.html:454
 msgid "Sender"
 msgstr "Expéditeur"
 
@@ -3468,18 +3707,75 @@ msgstr "RÉF : COMPTANT : %(total)s"
 msgid "SERVED BY %(cashier_name)s"
 msgstr "SERVI PAR %(cashier_name)s"
 
-#: templates/pdf/receipt.html:167
-msgid "SALES RECEIPT"
-msgstr "REÇU DE VENTE"
+#: templates/pdf/payment_receipt.html:149
+msgid "PAYMENT RECEIPT"
+msgstr "REÇU DE PAIEMENT"
 
+#: templates/pdf/payment_receipt.html:155
+msgid "Issued on:"
+msgstr "Émis le :"
+
+#: templates/pdf/payment_receipt.html:162
+msgid "Invoice settled:"
+msgstr "Facture réglée :"
+
+#: templates/pdf/payment_receipt.html:166
+msgid "Invoice date:"
+msgstr "Date de facture :"
+
+#: templates/pdf/payment_receipt.html:172
+msgid "Received from"
+msgstr "Reçu de"
+
+#: templates/pdf/payment_receipt.html:182
+msgid "Amount received, with thanks"
+msgstr "Montant reçu, avec nos remerciements"
+
+#: templates/pdf/payment_receipt.html:192
+msgid "Invoice total"
+msgstr "Total de la facture"
+
+#: templates/pdf/payment_receipt.html:196
+msgid "Total paid"
+msgstr "Total payé"
+
+#: templates/pdf/payment_receipt.html:200
+msgid "Balance remaining"
+msgstr "Solde restant dû"
+
+#: templates/pdf/payment_receipt.html:205
+msgid "Payment method"
+msgstr "Mode de paiement"
+
+#: templates/pdf/payment_receipt.html:211
+msgid "Payment reference"
+msgstr "Référence du paiement"
+
+#: templates/pdf/payment_receipt.html:219
 #: templates/pdf/receipt.html:174
 #: tests/test_translations.py:92
 msgid "CANCELLED"
 msgstr "ANNULÉE"
 
-#: templates/pdf/receipt.html:183
-msgid "Date:"
-msgstr "Date :"
+#: templates/pdf/payment_receipt.html:227
+msgid "Issued by"
+msgstr "Émis par"
+
+#: templates/pdf/payment_receipt.html:231
+msgid "Stamp and signature"
+msgstr "Cachet et signature"
+
+#: templates/pdf/payment_receipt.html:236
+msgid "This receipt confirms that the invoice above has been settled in full."
+msgstr "Ce reçu atteste que la facture ci-dessus a été intégralement réglée."
+
+#: templates/pdf/payment_receipt.html:159
+msgid "%(issue_date)s at %(issue_time)s"
+msgstr "%(issue_date)s à %(issue_time)s"
+
+#: templates/pdf/receipt.html:167
+msgid "SALES RECEIPT"
+msgstr "REÇU DE VENTE"
 
 #: templates/pdf/receipt.html:187
 msgid "Customer:"

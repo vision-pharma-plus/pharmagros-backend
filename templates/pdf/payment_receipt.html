@@ -153,7 +153,10 @@
     <div class="receipt-number">{{ receipt.receipt_number }}</div>
     <div>
       <span class="lbl">{% trans "Issued on:" %}</span>
-      {{ receipt.issued_at|date:"d/m/Y" }} {% trans "at" %} {{ receipt.issued_at|date:"H:i" }}
+      {% comment %}One blocktrans rather than a bare "at" between two date
+      filters: the word order of "<date> at <time>" is not universal, and a
+      lone "at" gives a translator nothing to work from.{% endcomment %}
+      {% blocktrans with issue_date=receipt.issued_at|date:"d/m/Y" issue_time=receipt.issued_at|date:"H:i" %}{{ issue_date }} at {{ issue_time }}{% endblocktrans %}
     </div>
     <div>
       <span class="lbl">{% trans "Invoice settled:" %}</span>

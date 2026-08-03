@@ -907,6 +907,54 @@ TRANSLATIONS: dict[str, str] = {
         "La facture %(number)s a été émise pour cette même vente. "
         "Il ne s'agit pas d'un montant supplémentaire à payer.",
 
+    # -- Payment receipt PDF -------------------------------------------------
+    # Acknowledges settlement of a *credit* invoice, so unlike the 80 mm
+    # counter receipt above this is an A4 document filed by an accounts
+    # department. "Reçu de paiement" rather than "Reçu de vente": it evidences
+    # the payment, not the sale, and the two are separate documents in
+    # separate numbering series.
+    "PAYMENT RECEIPT": "REÇU DE PAIEMENT",
+    "Issued on:": "Émis le :",
+    # Placeholders are what Django rewrites {{ issue_date }} into before it
+    # consults the catalogue, so the msgid carries %(...)s rather than the
+    # template syntax. Mirrors the invoice's "Buja, On ... at ..." entry.
+    "%(issue_date)s at %(issue_time)s": "%(issue_date)s à %(issue_time)s",
+    "Invoice settled:": "Facture réglée :",
+    "Invoice date:": "Date de facture :",
+    "Received from": "Reçu de",
+    # The thanks belongs in the label rather than a separate line: it is the
+    # sentence the customer reads, and OHADA practice puts the acknowledgement
+    # with the amount.
+    "Amount received, with thanks": "Montant reçu, avec nos remerciements",
+    "Invoice total": "Total de la facture",
+    "Total paid": "Total payé",
+    "Balance remaining": "Solde restant dû",
+    "Payment method": "Mode de paiement",
+    "Payment reference": "Référence du paiement",
+    "Issued by": "Émis par",
+    "Stamp and signature": "Cachet et signature",
+    "This receipt confirms that the invoice above has been settled in full.":
+        "Ce reçu atteste que la facture ci-dessus a été intégralement réglée.",
+
+    # -- Transactional emails ------------------------------------------------
+    # Bodies for the invoice and payment-receipt emails. These go to the
+    # customer rather than to staff, so they are translated to the customer's
+    # language, which for this deployment is French by default.
+    "Invoice:": "Facture :",
+    "Total:": "Total :",
+    "Due date:": "Échéance :",
+    "Balance due:": "Solde dû :",
+    "Amount received:": "Montant reçu :",
+    "Kind regards,": "Cordialement,",
+    "Your receipt is attached to this message.":
+        "Votre reçu est joint à ce message.",
+    "Dear %(name)s,": "Bonjour %(name)s,",
+    "Please find invoice %(number)s attached.":
+        "Veuillez trouver ci-joint la facture %(number)s.",
+    "Thank you — we confirm that invoice %(number)s has been settled in full.":
+        "Merci — nous confirmons que la facture %(number)s a été "
+        "intégralement réglée.",
+
     # -- Purchasing ----------------------------------------------------------
     "purchase order line": "ligne de bon de commande",
     "purchase order lines": "lignes de bon de commande",
