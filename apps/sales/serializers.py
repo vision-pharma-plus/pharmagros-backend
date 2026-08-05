@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.core.fields import MoneySerializerField
@@ -14,6 +15,25 @@ from .models import (
     SaleType,
     TenderMethod,
 )
+
+
+def _discount_percent_field(**kwargs) -> serializers.DecimalField:
+    """
+    A manual discount input, bounded by the configured ceiling.
+
+    The bound is repeated here rather than left to the service layer so the API
+    rejects an out-of-range discount as a 400 field error — which is what the
+    form on the other end can point at the offending input. The service check
+    in `services._check_discount_limit` remains the real gate: it also covers
+    the non-HTTP callers this serializer never sees.
+    """
+    return serializers.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        min_value=Decimal("0"),
+        max_value=Decimal(settings.MAX_MANUAL_DISCOUNT_PERCENT),
+        **kwargs,
+    )
 
 
 class SaleLineBatchSerializer(serializers.ModelSerializer):
@@ -65,9 +85,7 @@ class SaleLineWriteSerializer(serializers.Serializer):
     unit_price = serializers.DecimalField(
         max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
     )
-    discount_percent = serializers.DecimalField(
-        max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False,
-    )
+    discount_percent = _discount_percent_field(required=False)
 
 
 class SaleListSerializer(serializers.ModelSerializer):
@@ -134,9 +152,7 @@ class SaleCreateSerializer(serializers.Serializer):
     sale_type = serializers.ChoiceField(choices=SaleType.choices, default=SaleType.CASH)
     lines = SaleLineWriteSerializer(many=True, allow_empty=False)
     sale_date = serializers.DateTimeField(required=False)
-    discount_percent = serializers.DecimalField(
-        max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False,
-    )
+    discount_percent = _discount_percent_field(required=False)
     customer_order_reference = serializers.CharField(
         max_length=64, required=False, allow_blank=True,
     )
@@ -158,9 +174,7 @@ class SaleUpdateSerializer(serializers.Serializer):
     sale_type = serializers.ChoiceField(choices=SaleType.choices, required=False)
     lines = SaleLineWriteSerializer(many=True, required=False, allow_empty=False)
     sale_date = serializers.DateTimeField(required=False)
-    discount_percent = serializers.DecimalField(
-        max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False,
-    )
+    discount_percent = _discount_percent_field(required=False)
     customer_order_reference = serializers.CharField(
         max_length=64, required=False, allow_blank=True,
     )

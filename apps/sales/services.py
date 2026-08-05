@@ -66,47 +66,55 @@ def max_manual_discount() -> Decimal:
 
 def _check_discount_limit(discount_percent: Decimal, *, actor, is_standing: bool = False) -> None:
     """
-    Refuse a manual discount above the configured ceiling.
+    Refuse a manual discount above the configured ceiling, and refuse any
+    manual discount at all from a user without `sales.apply_discount`.
 
     Enforced here rather than in the serializer so every route into a sale is
     covered — the API, a management command, an import. A rule that only the
     HTTP layer knows about is one a background job can walk straight past.
+
+    The ceiling is absolute. There is no override permission: a discount above
+    policy cannot be authorised at the counter by anyone, because a limit that
+    a sufficiently senior user can lift is not a limit, it is a speed bump.
+    Changing it means changing MAX_MANUAL_DISCOUNT_PERCENT, which is a
+    deployment decision rather than a per-sale one.
 
     `is_standing` marks a discount that came from the customer record rather
     than the operator. Those are contractual terms agreed when the account was
     opened, already governed by `partners.change_customer`, and are not
     re-litigated at the counter: applying the ceiling to them would block
     ordinary sales to a customer whose negotiated rate is 15%.
-
-    A user holding `sales.override_discount_limit` may exceed the ceiling. The
-    override is not silent — `create_sale` and `update_sale` record it in the
-    audit log, because a discount above policy is exactly the entry a later
-    review looks for.
     """
     if is_standing or discount_percent <= ZERO:
         return
+
+    # Who may discount at all. Checked before the amount, so a user without
+    # authority is told they cannot discount rather than being invited to try a
+    # smaller number that would fail for the same reason.
+    #
+    # No actor means a system/import context with no user to check against.
+    # Fail closed: an unattributed caller is precisely the one that must not be
+    # able to reduce revenue.
+    if actor is None or not actor.has_perm_code("sales.apply_discount"):
+        raise BusinessRuleViolation(
+            _("You do not have permission to apply a discount."),
+            code="discount_not_permitted",
+            details={"required_permission": "sales.apply_discount"},
+        )
 
     ceiling = max_manual_discount()
     if discount_percent <= ceiling:
         return
 
-    # No actor means a system/import context with no user to check a
-    # permission against. Fail closed: an unattributed caller is precisely the
-    # one that must not be able to grant an unlimited discount.
-    if actor is not None and actor.has_perm_code("sales.override_discount_limit"):
-        return
-
     raise BusinessRuleViolation(
         _(
-            "A discount of %(requested)s%% exceeds the maximum of %(max)s%%. "
-            "A manager or administrator must authorise this."
+            "A discount of %(requested)s%% exceeds the maximum of %(max)s%%."
         )
         % {"requested": _fmt_percent(discount_percent), "max": _fmt_percent(ceiling)},
         code="discount_limit_exceeded",
         details={
             "requested_percent": str(discount_percent),
             "max_percent": str(ceiling),
-            "required_permission": "sales.override_discount_limit",
         },
     )
 
@@ -119,14 +127,6 @@ def _fmt_percent(value: Decimal) -> str:
     if normalised == normalised.to_integral_value():
         normalised = normalised.quantize(Decimal("1"))
     return f"{normalised}"
-
-
-def _exceeds_discount_ceiling(sale: Sale) -> bool:
-    """Whether any discount on this sale sits above the configured ceiling."""
-    ceiling = max_manual_discount()
-    if sale.discount_percent > ceiling:
-        return True
-    return any(line.discount_percent > ceiling for line in sale.lines.all())
 
 
 def _invoice_lines_for(sale: Sale, lines=None) -> list[dict]:
@@ -240,15 +240,6 @@ def create_sale(
         entity_id=str(sale.pk),
         entity_label=sale.sale_number,
         new_value=snapshot(sale),
-        # A discount above policy passed the gate above, which means someone
-        # with override authority granted it. Flagged here so it is findable
-        # in the audit log without re-deriving the ceiling from every row.
-        notes=(
-            f"Draft sale created with a discount above the "
-            f"{_fmt_percent(max_manual_discount())}% ceiling"
-            if _exceeds_discount_ceiling(sale)
-            else ""
-        ),
         actor=actor,
     )
     return sale
@@ -352,12 +343,7 @@ def update_sale(
         entity_label=sale.sale_number,
         previous_value=previous,
         new_value=snapshot(sale),
-        notes=(
-            f"Draft sale amended with a discount above the "
-            f"{_fmt_percent(max_manual_discount())}% ceiling"
-            if _exceeds_discount_ceiling(sale)
-            else "Draft sale amended"
-        ),
+        notes="Draft sale amended",
         actor=actor,
     )
     return sale

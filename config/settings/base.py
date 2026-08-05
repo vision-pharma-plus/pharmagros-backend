@@ -314,9 +314,9 @@ DEFAULT_VAT_RATE = env.str("DEFAULT_VAT_RATE", default="18.00")
 # A discount is the one number on a sale an operator can change that directly
 # reduces revenue, and it needs no approval elsewhere in the flow — which makes
 # it the easiest lever for both honest error (a mistyped 50 for 5) and
-# deliberate abuse. Anything above this ceiling requires
-# `sales.override_discount_limit`, so exceeding it is a deliberate,
-# attributable act by someone with the authority to take it.
+# deliberate abuse. The ceiling is absolute: no permission lifts it, and only
+# holders of `sales.apply_discount` may enter a manual discount at all.
+# Raising it is a deployment decision, not a counter decision.
 #
 # A customer's *standing* contractual discount is not subject to this: it was
 # agreed when the account was set up, not chosen at the counter. See

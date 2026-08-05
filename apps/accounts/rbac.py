@@ -44,11 +44,11 @@ PERMISSIONS: list[tuple[str, str, str, str, bool]] = [
     ("sales.change_sale", "Modifier une vente", "Edit sale", M.SALES, False),
     ("sales.cancel_sale", "Annuler une vente", "Cancel sale", M.SALES, True),
     ("sales.sell_on_credit", "Vendre à crédit", "Sell on credit", M.SALES, True),
+    # Entering any manual discount, up to MAX_MANUAL_DISCOUNT_PERCENT. Held by
+    # management roles only: a discount is the one number on a sale that
+    # directly reduces revenue and needs no approval elsewhere in the flow.
+    # There is no companion permission to exceed the ceiling — it is absolute.
     ("sales.apply_discount", "Appliquer une remise", "Apply discount", M.SALES, True),
-    # Granting a discount above MAX_MANUAL_DISCOUNT_PERCENT. Held only by
-    # management roles: the ceiling exists precisely so that the one number an
-    # operator can change to reduce revenue cannot be moved without authority.
-    ("sales.override_discount_limit", "Déroger au plafond de remise", "Override discount limit", M.SALES, True),
     ("sales.override_credit_limit", "Déroger à la limite de crédit", "Override credit limit", M.SALES, True),
     ("sales.process_return", "Traiter un retour", "Process return", M.SALES, True),
     ("sales.view_margin", "Consulter les marges", "View margins", M.SALES, True),
@@ -212,7 +212,9 @@ ROLES: list[dict] = [
             "inventory.transfer_stock",
             "sales.change_sale",
             "sales.sell_on_credit",
-            "sales.apply_discount",
+            # No sales.apply_discount: discounting is management authority, so
+            # it sits with the store manager and the administrator rather than
+            # with the counter. See settings.MAX_MANUAL_DISCOUNT_PERCENT.
             "sales.process_return",
             "sales.cancel_sale",
             "sales.print_receipt",
@@ -286,11 +288,10 @@ ROLES: list[dict] = [
             "partners.change_supplier",
             "sales.view_sale",
             "sales.view_margin",
-            # The manager half of the discount control: authority to grant more
-            # than the standing ceiling, which a technician or pharmacist
-            # cannot. See settings.MAX_MANUAL_DISCOUNT_PERCENT.
+            # Discount authority, which a technician or pharmacist does not
+            # have. Still bounded by settings.MAX_MANUAL_DISCOUNT_PERCENT —
+            # the ceiling binds every role, this one included.
             "sales.apply_discount",
-            "sales.override_discount_limit",
             # Expenses, supplier settlement and the consolidated view of money
             # leaving the business all sit with the same oversight role.
             "accounting.view_expense",
