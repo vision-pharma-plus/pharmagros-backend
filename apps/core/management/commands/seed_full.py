@@ -2380,7 +2380,7 @@ class Command(BaseCommand):
             lines=[
                 {
                     "product": by_code["MED-0001"], "quantity_ordered": D("120"),
-                    "unit_cost": D("4500"),
+                    "unit_cost": D("330"),
                     # Accepted short-dated: the minimum is set to the date the
                     # supplier could actually deliver. receive_goods refuses a
                     # batch expiring before this, so the two must agree.
@@ -2389,27 +2389,32 @@ class Command(BaseCommand):
                 },
                 {
                     "product": by_code["MED-0002"], "quantity_ordered": D("80"),
-                    "unit_cost": D("7200"),
+                    "unit_cost": D("555"),
                     "expected_expiry_date": self.today + timedelta(days=585),
                     "notes": "Antibiotique sur ordonnance.",
                 },
                 {
                     "product": by_code["MED-0003"], "quantity_ordered": D("100"),
-                    "unit_cost": D("9800"),
+                    "unit_cost": D("555"),
                     "expected_expiry_date": self.today + timedelta(days=630),
                     "notes": "Programme antipaludique, exonere.",
                     },
                 {
                     "product": by_code["MED-0008"], "quantity_ordered": D("90"),
-                    "unit_cost": D("3800"),
+                    "unit_cost": D("6120"),
                     "expected_expiry_date": self.today + timedelta(days=675),
                     "notes": "Anti-inflammatoire, vente libre.",
                 },
             ],
             expected_delivery_date=self.today - timedelta(days=3),
-            freight_cost=D("150000"),
-            customs_duty=D("90000"),
-            other_charges=D("25000"),
+            # Landed charges are ~6% of goods value. They are apportioned into
+            # the batch cost by receive_goods, so line costs are set slightly
+            # below the catalogue unit_cost and the charges bring them back to
+            # it. Charges out of scale with the goods would push landed cost
+            # above the selling price and invert the gross margin.
+            freight_cost=D("25000"),
+            customs_duty=D("12000"),
+            other_charges=D("4000"),
             supplier_reference="PK-2026-0455",
             notes="Reapprovisionnement trimestriel.",
             actor=actor,
@@ -2470,21 +2475,21 @@ class Command(BaseCommand):
             lines=[
                 {
                     "product": by_code["MED-0009"], "quantity_ordered": D("40"),
-                    "unit_cost": D("5100"),
+                    "unit_cost": D("2780"),
                     "expected_expiry_date": self.today + timedelta(days=300),
                     "notes": "Sirop antitussif, rotation lente.",
                 },
                 {
                     "product": by_code["MED-0010"], "quantity_ordered": D("35"),
-                    "unit_cost": D("4100"),
+                    "unit_cost": D("1255"),
                     "expected_expiry_date": self.today + timedelta(days=330),
                     "notes": "Pommade antifongique, rotation lente.",
                 },
             ],
             expected_delivery_date=self.today - timedelta(days=220),
-            freight_cost=D("40000"),
-            customs_duty=D("20000"),
-            other_charges=D("8000"),
+            freight_cost=D("5000"),
+            customs_duty=D("3000"),
+            other_charges=D("1200"),
             supplier_reference="PK-2025-0912",
             notes="Ancien reassort, sans rotation depuis la livraison.",
             actor=actor,
@@ -2529,21 +2534,21 @@ class Command(BaseCommand):
             lines=[
                 {
                     "product": by_code["MED-0006"], "quantity_ordered": D("60"),
-                    "unit_cost": D("11500"),
+                    "unit_cost": D("1670"),
                     "expected_expiry_date": self.today + timedelta(days=480),
                     "notes": "Chaine du froid a maintenir a la livraison.",
                 },
                 {
                     "product": by_code["MED-0004"], "quantity_ordered": D("70"),
-                    "unit_cost": D("6400"),
+                    "unit_cost": D("555"),
                     "expected_expiry_date": self.today + timedelta(days=720),
                     "notes": "Traitement chronique, stock de securite.",
                 },
             ],
             expected_delivery_date=self.today + timedelta(days=21),
-            freight_cost=D("200000"),
-            customs_duty=D("120000"),
-            other_charges=D("30000"),
+            freight_cost=D("4000"),
+            customs_duty=D("2000"),
+            other_charges=D("700"),
             supplier_reference="EAMS-2026-1120",
             notes="Commande regionale en attente de livraison.",
             actor=actor,
