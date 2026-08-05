@@ -523,7 +523,10 @@ class SupplierPaymentCreateSerializer(serializers.Serializer):
         return attrs
 
 
-class AllocatePaymentSerializer(serializers.Serializer):
+class AllocateSupplierPaymentSerializer(serializers.Serializer):
+    # Named for the supplier side specifically: invoicing has its own
+    # customer-payment allocation serializer, and two components sharing the
+    # name "AllocatePaymentRequest" would collide in the generated schema.
     allocations = AllocationInputSerializer(many=True, allow_empty=False)
 
 

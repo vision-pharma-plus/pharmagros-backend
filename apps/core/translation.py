@@ -17,6 +17,13 @@ CACHE_PREFIX = "mt"
 
 SUPPORTED_LANGUAGES = ("fr", "en")
 
+# The same set as above, paired with display labels, for serializer
+# `ChoiceField`s. Every language choice in the API must use this exact list:
+# a bare ("fr", "en") produces a *different* choice set as far as the schema
+# generator is concerned, which splits one concept into several hash-suffixed
+# enums in the generated client.
+LANGUAGE_CHOICES = [("fr", "Français"), ("en", "English")]
+
 # Free text from a pharmacy record: a stock movement reason, a note on a
 # returned batch. Long enough for a paragraph, short enough that a pasted
 # document cannot run up a bill.

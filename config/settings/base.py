@@ -266,7 +266,19 @@ SPECTACULAR_SETTINGS = {
         # and `reason_code` on the credit-note request — so it needs an
         # explicit name to stay a single enum in the generated client.
         "CreditNoteReasonEnum": "apps.invoicing.models.CreditNoteReason.choices",
-        "LanguageEnum": [("fr", "Français"), ("en", "English")],
+        "LanguageEnum": "apps.core.translation.LANGUAGE_CHOICES",
+        # Supplier-side and expense enums. Each overlaps a customer-side enum
+        # on field name (`status`, `method`) but not on values, so without
+        # these the generator resolves the clash with hash suffixes.
+        "SupplierInvoiceStatusEnum": "apps.purchasing.models.SupplierInvoiceStatus.choices",
+        "ExpenseStatusEnum": "apps.accounting.models.ExpenseStatus.choices",
+        # SupplierPaymentMethod and ExpensePaymentMethod are the same set of
+        # values (PaymentMethod without CREDIT_NOTE, which only settles a
+        # customer invoice). They are separate classes so that neither can
+        # drift into offering a non-cash settlement, but to the schema they are
+        # one choice set and must therefore carry one name — listing both would
+        # trip the duplicate check in ENUM_NAME_OVERRIDES.
+        "OutgoingPaymentMethodEnum": "apps.purchasing.models.SupplierPaymentMethod.choices",
     },
 }
 

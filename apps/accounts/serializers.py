@@ -8,6 +8,8 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from apps.core.translation import LANGUAGE_CHOICES
+
 from .models import Permission, Role, User, UserSession
 
 
@@ -261,7 +263,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 class LanguageSerializer(serializers.Serializer):
     """Live language switch — no logout required."""
 
-    language = serializers.ChoiceField(choices=["fr", "en"])
+    language = serializers.ChoiceField(choices=LANGUAGE_CHOICES)
 
 
 class UserSessionSerializer(serializers.ModelSerializer):

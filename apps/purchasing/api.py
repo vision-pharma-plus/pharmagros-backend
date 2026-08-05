@@ -20,7 +20,7 @@ from .models import (
     SupplierPayment,
 )
 from .serializers import (
-    AllocatePaymentSerializer,
+    AllocateSupplierPaymentSerializer,
     ApprovalSerializer,
     GoodsReceiptCreateSerializer,
     GoodsReceiptSerializer,
@@ -607,13 +607,13 @@ class SupplierPaymentViewSet(
 
     @extend_schema(
         tags=["purchasing"], summary="Allocate a payment's remainder to invoices",
-        request=AllocatePaymentSerializer,
+        request=AllocateSupplierPaymentSerializer,
     )
     @action(detail=True, methods=["post"])
     def allocate(self, request, pk=None):
         """Match money paid on account to invoices once they arrive."""
         payment = self.get_object()
-        serializer = AllocatePaymentSerializer(data=request.data)
+        serializer = AllocateSupplierPaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         services.allocate_supplier_payment(

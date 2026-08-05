@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import AuditLog, DocumentSequence
-from .translation import MAX_TEXT_LENGTH, SUPPORTED_LANGUAGES
+from .translation import LANGUAGE_CHOICES, MAX_TEXT_LENGTH
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -38,7 +38,7 @@ class TranslationRequestSerializer(serializers.Serializer):
     """
 
     text = serializers.CharField(max_length=MAX_TEXT_LENGTH, trim_whitespace=True)
-    target = serializers.ChoiceField(choices=SUPPORTED_LANGUAGES)
+    target = serializers.ChoiceField(choices=LANGUAGE_CHOICES)
 
 
 class TranslationResponseSerializer(serializers.Serializer):
