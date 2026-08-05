@@ -117,6 +117,12 @@ DEFAULT_SEQUENCES = [
     {"key": "purchasing.order", "prefix": "BC-{yyyy}-", "label": "Bon de commande"},
     {"key": "purchasing.requisition", "prefix": "DA-{yyyy}-", "label": "Demande d'achat"},
     {"key": "purchasing.receipt", "prefix": "BR-{yyyy}-", "label": "Bon de réception"},
+    # Our own reference for a supplier's bill. The supplier's own number is
+    # recorded separately on the document — it is theirs, may repeat across
+    # suppliers, and cannot be relied on to be unique or even present.
+    {"key": "purchasing.supplier_invoice", "prefix": "FF-{yyyy}-", "label": "Facture fournisseur"},
+    {"key": "purchasing.supplier_payment", "prefix": "PF-{yyyy}-", "label": "Paiement fournisseur"},
+    {"key": "accounting.expense", "prefix": "DEP-{yyyy}-", "label": "Dépense"},
     {"key": "inventory.adjustment", "prefix": "AJ-{yyyy}-", "label": "Ajustement de stock"},
     {"key": "inventory.transfer", "prefix": "TR-{yyyy}-", "label": "Transfert de stock"},
     {"key": "inventory.disposal", "prefix": "DES-{yyyy}-", "label": "Destruction de stock"},

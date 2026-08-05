@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from django.utils import timezone
@@ -108,6 +110,52 @@ def register_session(user: User, *, jti: str, expires_at, ip: str | None,
         user=user, jti=jti, expires_at=expires_at, ip_address=ip,
         user_agent=(user_agent or "")[:512],
     )
+
+
+def rotate_session(old_jti: str, token_data: dict, *, ip: str | None,
+                   user_agent: str) -> None:
+    """
+    Re-point a session at the refresh token that replaced its own.
+
+    SIMPLE_JWT rotates and blacklists on every refresh, so the jti recorded at
+    login stops being the live one after the first refresh. Leaving the row
+    pointing at the blacklisted jti would make the session unrevocable — the
+    holder keeps refreshing under a jti nothing tracks. `last_seen_at` is
+    updated here too, which is what makes the administrator's session list
+    show genuine activity rather than login time.
+    """
+    from django.conf import settings
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    new_refresh = token_data.get("refresh")
+    if not new_refresh:
+        # Rotation disabled: the original token still stands, so only touch
+        # the activity timestamp.
+        UserSession.objects.filter(jti=old_jti).update(last_seen_at=timezone.now())
+        return
+
+    try:
+        token = RefreshToken(new_refresh)
+    except Exception:  # pragma: no cover - the token was just minted
+        return
+
+    new_jti = token[settings.SIMPLE_JWT.get("JTI_CLAIM", "jti")]
+    token["session_jti"] = new_jti
+
+    UserSession.objects.filter(jti=old_jti).update(
+        jti=new_jti,
+        last_seen_at=timezone.now(),
+        expires_at=datetime.fromtimestamp(token["exp"], tz=UTC),
+        ip_address=ip,
+        user_agent=(user_agent or "")[:512],
+    )
+
+    # The client must receive tokens carrying the session claim, otherwise the
+    # next request authenticates with no session to check.
+    token_data["refresh"] = str(token)
+    access = token.access_token
+    access["session_jti"] = new_jti
+    token_data["access"] = str(access)
 
 
 def revoke_session(session: UserSession, *, reason: str = "") -> None:

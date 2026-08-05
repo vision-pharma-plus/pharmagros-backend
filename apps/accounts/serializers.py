@@ -1,4 +1,5 @@
 import secrets
+from datetime import UTC, datetime
 
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
@@ -21,6 +22,7 @@ class PermissionSerializer(serializers.ModelSerializer):
 
 class RoleSerializer(serializers.ModelSerializer):
     name = serializers.CharField(read_only=True)
+    description = serializers.CharField(read_only=True)
     permission_codes = serializers.SerializerMethodField()
     user_count = serializers.IntegerField(source="users.count", read_only=True)
 
@@ -28,11 +30,19 @@ class RoleSerializer(serializers.ModelSerializer):
         model = Role
         fields = [
             "id", "code", "name", "name_fr", "name_en",
-            "description_fr", "description_en",
+            "description", "description_fr", "description_en",
             "permissions", "permission_codes", "inherits_from",
             "is_system", "is_active", "user_count",
         ]
         read_only_fields = ["id", "is_system"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Both name columns are non-blank on the model, but a client supplies
+        # only the one language its user typed — `save()` back-fills the
+        # other. Same accommodation the catalogue and accounting make.
+        for field in ("name_fr", "name_en"):
+            self.fields[field].required = False
 
     def get_permission_codes(self, obj) -> list[str]:
         """Effective permissions, including everything inherited."""
@@ -68,7 +78,18 @@ class UserSerializer(serializers.ModelSerializer):
         perform. This is a usability affordance only — every one of these is
         independently enforced server-side, because a hidden button is not a
         security control.
+
+        A superuser is reported as holding the whole catalogue, matching what
+        `has_perm_code` grants them. Deriving this from role membership alone
+        would hand a superuser with no roles an empty permission list, hiding
+        every menu and button from the one account that can in fact use them —
+        which is how an administrator locks themselves out of a UI whose API
+        would have answered them.
         """
+        if obj.is_superuser:
+            from .rbac import ALL_CODES
+
+            return sorted(ALL_CODES)
         return sorted(obj.effective_permissions())
 
 
@@ -177,6 +198,35 @@ class TokenObtainSerializer(TokenObtainPairSerializer):
         data["user"] = UserSerializer(user).data
         data["must_change_password"] = user.must_change_password
         return data
+
+    def get_token_with_session(self, user, *, ip: str | None, user_agent: str):
+        """
+        Issue a refresh token and record the session it opens.
+
+        Session registration lives here rather than in the view because the
+        access token must carry the session's jti, and only the code that
+        mints the pair can put a claim inside it. Without that claim,
+        revocation cannot be enforced on the access token — which is what made
+        "sign out everywhere" ineffective.
+        """
+        from django.conf import settings
+
+        from . import services
+
+        refresh = self.get_token(user)
+        jti = refresh[settings.SIMPLE_JWT.get("JTI_CLAIM", "jti")]
+
+        expires_at = datetime.fromtimestamp(refresh["exp"], tz=UTC)
+        services.register_session(
+            user, jti=jti, expires_at=expires_at, ip=ip, user_agent=user_agent,
+        )
+
+        # Stamp the session onto both halves so the access token can be
+        # checked against it on every request.
+        refresh["session_jti"] = jti
+        access = refresh.access_token
+        access["session_jti"] = jti
+        return refresh, access
 
 
 class PasswordChangeSerializer(serializers.Serializer):

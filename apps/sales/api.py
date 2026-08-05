@@ -18,6 +18,7 @@ from .models import Sale, SaleLine, SaleReturn, SalesReceipt
 from .serializers import (
     CancelSerializer,
     ConfirmSaleSerializer,
+    DeleteDraftSerializer,
     InvoiceForReceiptSerializer,
     RecallTraceSerializer,
     SaleCreateSerializer,
@@ -28,6 +29,7 @@ from .serializers import (
     SaleSerializer,
     SalesReceiptListSerializer,
     SalesReceiptSerializer,
+    SaleUpdateSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,19 +55,26 @@ class SaleFilter(filters.FilterSet):
 @extend_schema_view(
     list=extend_schema(tags=["sales"], summary="List sales"),
     retrieve=extend_schema(tags=["sales"], summary="Retrieve a sale"),
+    update=extend_schema(tags=["sales"], summary="Replace a draft sale"),
+    partial_update=extend_schema(tags=["sales"], summary="Amend a draft sale"),
+    destroy=extend_schema(tags=["sales"], summary="Delete a draft sale"),
 )
 class SaleViewSet(
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
     """
     Sales.
 
-    No update or destroy route: a draft is replaced by cancelling and
-    re-creating, and a confirmed sale is a commercial record that can only be
-    cancelled (with reason) or returned against.
+    Update and destroy apply to *drafts only*, and the restriction lives in the
+    service layer (`update_sale`, `delete_draft_sale`) rather than here, so it
+    holds for every caller. A confirmed sale has moved stock and put a document
+    in the customer's hands: it is corrected by cancellation or a return, never
+    by editing what it says or removing the row.
     """
 
     queryset = Sale.objects.filter(deleted_at__isnull=True).select_related(
@@ -80,6 +89,11 @@ class SaleViewSet(
         "list": "sales.view_sale",
         "retrieve": "sales.view_sale",
         "create": "sales.add_sale",
+        "update": "sales.change_sale",
+        "partial_update": "sales.change_sale",
+        # Deleting a draft is destructive in a way editing is not, so it sits
+        # with the cancellation authority rather than with ordinary editing.
+        "destroy": "sales.cancel_sale",
         "confirm": "sales.add_sale",
         "cancel": "sales.cancel_sale",
         "process_return": "sales.process_return",
@@ -92,23 +106,29 @@ class SaleViewSet(
             return SaleListSerializer
         if self.action == "create":
             return SaleCreateSerializer
+        if self.action in {"update", "partial_update"}:
+            return SaleUpdateSerializer
         return SaleSerializer
 
-    def create(self, request, *args, **kwargs):
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action == "retrieve":
+            # The detail view renders every line with its product and batches.
+            queryset = queryset.prefetch_related(
+                "lines__product", "lines__batch_allocations"
+            )
+        return queryset
+
+    def _resolve_lines(self, raw_lines):
+        """
+        Turn line payloads carrying product UUIDs into ones carrying instances.
+
+        The services work with model objects, not identifiers. Unknown products
+        are reported together rather than one per round trip, so an operator
+        fixing a bad import sees the whole list at once.
+        """
         from apps.catalog.models import Medicine
-        from apps.inventory.models import Warehouse
-        from apps.partners.models import Customer
 
-        serializer = SaleCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = dict(serializer.validated_data)
-
-        customer = get_object_or_404(Customer, pk=data.pop("customer"))
-        warehouse = get_object_or_404(Warehouse, pk=data.pop("warehouse"))
-
-        # Resolve product UUIDs to instances before handing off to the service,
-        # which works with model objects rather than raw identifiers.
-        raw_lines = data.pop("lines")
         product_ids = {line["product"] for line in raw_lines}
         products = {p.pk: p for p in Medicine.objects.filter(pk__in=product_ids)}
 
@@ -120,13 +140,69 @@ class SaleViewSet(
                 details={"product_ids": [str(m) for m in missing]},
             )
 
-        lines = [{**line, "product": products[line["product"]]} for line in raw_lines]
+        return [{**line, "product": products[line["product"]]} for line in raw_lines]
+
+    def create(self, request, *args, **kwargs):
+        from apps.inventory.models import Warehouse
+        from apps.partners.models import Customer
+
+        serializer = SaleCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = dict(serializer.validated_data)
+
+        customer = get_object_or_404(Customer, pk=data.pop("customer"))
+        warehouse = get_object_or_404(Warehouse, pk=data.pop("warehouse"))
+        lines = self._resolve_lines(data.pop("lines"))
 
         sale = services.create_sale(
             customer=customer, warehouse=warehouse, lines=lines,
             actor=request.user, **data,
         )
         return Response(SaleSerializer(sale).data, status=201)
+
+    def update(self, request, *args, **kwargs):
+        """
+        Amend a draft sale.
+
+        PATCH and PUT behave identically: both accept a partial payload and
+        leave unsent fields alone. A sale is a composite document rather than a
+        flat resource — a PUT that blanked every omitted header field would
+        wipe the delivery reference and notes on any client that sent only the
+        lines it had changed.
+        """
+        from apps.inventory.models import Warehouse
+        from apps.partners.models import Customer
+
+        sale = self.get_object()
+        serializer = SaleUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = dict(serializer.validated_data)
+
+        if "customer" in data:
+            data["customer"] = get_object_or_404(Customer, pk=data["customer"])
+        if "warehouse" in data:
+            data["warehouse"] = get_object_or_404(Warehouse, pk=data["warehouse"])
+        if "lines" in data:
+            data["lines"] = self._resolve_lines(data["lines"])
+
+        sale = services.update_sale(sale, actor=request.user, **data)
+        return Response(SaleSerializer(sale).data)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a draft sale.
+
+        Soft-deleted by the service, so the number remains accounted for. The
+        reason may be supplied in the body and is recorded in the audit entry.
+        """
+        sale = self.get_object()
+        serializer = DeleteDraftSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        services.delete_draft_sale(
+            sale, reason=serializer.validated_data.get("reason", ""), actor=request.user
+        )
+        return Response(status=204)
 
     @extend_schema(
         tags=["sales"], summary="Confirm a sale (issues stock and invoices)",

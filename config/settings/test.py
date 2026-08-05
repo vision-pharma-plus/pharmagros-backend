@@ -60,6 +60,7 @@ REST_FRAMEWORK = {  # noqa: F405
         "auth": None,
         "password_reset": None,
         "reports": None,
+        "translate": None,
         "default": None,
     },
 }

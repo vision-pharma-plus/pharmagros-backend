@@ -29,6 +29,7 @@ class PermissionModule(models.TextChoices):
     INVOICING = "INVOICING", _("Invoicing")
     PURCHASING = "PURCHASING", _("Purchasing")
     PARTNERS = "PARTNERS", _("Customers & suppliers")
+    ACCOUNTING = "ACCOUNTING", _("Accounting")
     REPORTING = "REPORTING", _("Reporting")
     ADMINISTRATION = "ADMINISTRATION", _("Administration")
     AUDIT = "AUDIT", _("Audit & compliance")
@@ -117,6 +118,38 @@ class Role(TimeStampedModel):
         from django.utils.translation import get_language
 
         return self.name_fr if (get_language() or "fr").startswith("fr") else self.name_en
+
+    @property
+    def description(self) -> str:
+        from django.utils.translation import get_language
+
+        if (get_language() or "fr").startswith("fr"):
+            return self.description_fr or self.description_en
+        return self.description_en or self.description_fr
+
+    def save(self, *args, **kwargs):
+        """
+        Fill in the missing language from the one that was supplied.
+
+        Same behaviour as catalogue and accounting categories: a user types a
+        role's label in their own language and should not be asked for a
+        translation they may not have. A blank column would render as an empty
+        label for half the staff. The machine translation is a starting point
+        that can be corrected by editing.
+        """
+        from apps.core.translation import translate_text
+
+        if self.name_fr and not self.name_en:
+            self.name_en = translate_text(self.name_fr, "en")
+        elif self.name_en and not self.name_fr:
+            self.name_fr = translate_text(self.name_en, "fr")
+
+        if self.description_fr and not self.description_en:
+            self.description_en = translate_text(self.description_fr, "en")
+        elif self.description_en and not self.description_fr:
+            self.description_fr = translate_text(self.description_en, "fr")
+
+        super().save(*args, **kwargs)
 
     def effective_permissions(self) -> set[str]:
         """

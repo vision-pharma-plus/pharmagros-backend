@@ -18,6 +18,7 @@ api_v1 = [
     path("sales/", include("apps.sales.urls")),
     path("invoicing/", include("apps.invoicing.urls")),
     path("purchasing/", include("apps.purchasing.urls")),
+    path("accounting/", include("apps.accounting.urls")),
     path("reporting/", include("apps.reporting.urls")),
     path("notifications/", include("apps.notifications.urls")),
     path("core/", include("apps.core.urls")),

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from .models import AuditLog, DocumentSequence
+from .translation import MAX_TEXT_LENGTH, SUPPORTED_LANGUAGES
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -24,3 +25,26 @@ class DocumentSequenceSerializer(serializers.ModelSerializer):
         model = DocumentSequence
         fields = ["id", "key", "label", "prefix", "padding", "scope", "current_value"]
         read_only_fields = ["id", "key", "current_value"]
+
+
+class TranslationRequestSerializer(serializers.Serializer):
+    """
+    Input for the on-demand translation of user-entered text.
+
+    Takes the text itself rather than a model reference: the control is a
+    reading aid over whatever note is already on the reader's screen, and
+    accepting an entity id would mean granting this endpoint read access to
+    every table that has a notes field.
+    """
+
+    text = serializers.CharField(max_length=MAX_TEXT_LENGTH, trim_whitespace=True)
+    target = serializers.ChoiceField(choices=SUPPORTED_LANGUAGES)
+
+
+class TranslationResponseSerializer(serializers.Serializer):
+    """Response shape, declared so the OpenAPI schema documents it."""
+
+    translated = serializers.CharField()
+    target = serializers.CharField()
+    engine = serializers.CharField()
+    cached = serializers.BooleanField()

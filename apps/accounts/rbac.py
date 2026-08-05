@@ -45,6 +45,10 @@ PERMISSIONS: list[tuple[str, str, str, str, bool]] = [
     ("sales.cancel_sale", "Annuler une vente", "Cancel sale", M.SALES, True),
     ("sales.sell_on_credit", "Vendre à crédit", "Sell on credit", M.SALES, True),
     ("sales.apply_discount", "Appliquer une remise", "Apply discount", M.SALES, True),
+    # Granting a discount above MAX_MANUAL_DISCOUNT_PERCENT. Held only by
+    # management roles: the ceiling exists precisely so that the one number an
+    # operator can change to reduce revenue cannot be moved without authority.
+    ("sales.override_discount_limit", "Déroger au plafond de remise", "Override discount limit", M.SALES, True),
     ("sales.override_credit_limit", "Déroger à la limite de crédit", "Override credit limit", M.SALES, True),
     ("sales.process_return", "Traiter un retour", "Process return", M.SALES, True),
     ("sales.view_margin", "Consulter les marges", "View margins", M.SALES, True),
@@ -75,6 +79,23 @@ PERMISSIONS: list[tuple[str, str, str, str, bool]] = [
     ("purchasing.cancel_order", "Annuler une commande", "Cancel purchase order", M.PURCHASING, True),
     ("purchasing.receive_goods", "Réceptionner des marchandises", "Receive goods", M.PURCHASING, False),
     ("purchasing.record_supplier_invoice", "Enregistrer une facture fournisseur", "Record supplier invoice", M.PURCHASING, True),
+    ("purchasing.view_supplier_invoice", "Consulter les factures fournisseurs", "View supplier invoices", M.PURCHASING, False),
+    # Paying a supplier moves money out of the business, so it is separated
+    # from recording what is owed: the person who enters an invoice should not
+    # also be the one who settles it.
+    ("purchasing.view_supplier_payment", "Consulter les paiements fournisseurs", "View supplier payments", M.PURCHASING, False),
+    ("purchasing.record_supplier_payment", "Enregistrer un paiement fournisseur", "Record supplier payment", M.PURCHASING, True),
+    ("purchasing.reverse_supplier_payment", "Annuler un paiement fournisseur", "Reverse supplier payment", M.PURCHASING, True),
+
+    # -- Accounting ---------------------------------------------------------
+    ("accounting.view_expense", "Consulter les dépenses", "View expenses", M.ACCOUNTING, False),
+    ("accounting.add_expense", "Enregistrer une dépense", "Record expense", M.ACCOUNTING, False),
+    ("accounting.change_expense", "Modifier une dépense", "Edit expense", M.ACCOUNTING, True),
+    ("accounting.delete_expense", "Supprimer une dépense", "Delete expense", M.ACCOUNTING, True),
+    ("accounting.approve_expense", "Approuver une dépense", "Approve expense", M.ACCOUNTING, True),
+    ("accounting.manage_expense_categories", "Gérer les catégories de dépenses", "Manage expense categories", M.ACCOUNTING, False),
+    ("accounting.view_financial_overview", "Consulter la synthèse financière", "View financial overview", M.ACCOUNTING, True),
+    ("accounting.view_reports", "Consulter les rapports comptables", "View accounting reports", M.ACCOUNTING, True),
 
     # -- Partners -----------------------------------------------------------
     ("partners.view_customer", "Consulter les clients", "View customers", M.PARTNERS, False),
@@ -207,8 +228,14 @@ ROLES: list[dict] = [
             "purchasing.view_order",
             "purchasing.add_order",
             "purchasing.submit_order",
+            "purchasing.view_supplier_invoice",
             "reporting.view_inventory_reports",
             "reporting.view_sales_reports",
+            # A pharmacist runs the counter day to day and books the small
+            # operating costs that arise there; approving them and seeing the
+            # consolidated financial picture stay with management.
+            "accounting.view_expense",
+            "accounting.add_expense",
         ],
     },
     {
@@ -251,10 +278,29 @@ ROLES: list[dict] = [
             "purchasing.approve_order",
             "purchasing.cancel_order",
             "purchasing.record_supplier_invoice",
+            "purchasing.view_supplier_invoice",
+            "purchasing.view_supplier_payment",
+            "purchasing.record_supplier_payment",
+            "purchasing.reverse_supplier_payment",
             "partners.add_supplier",
             "partners.change_supplier",
             "sales.view_sale",
             "sales.view_margin",
+            # The manager half of the discount control: authority to grant more
+            # than the standing ceiling, which a technician or pharmacist
+            # cannot. See settings.MAX_MANUAL_DISCOUNT_PERCENT.
+            "sales.apply_discount",
+            "sales.override_discount_limit",
+            # Expenses, supplier settlement and the consolidated view of money
+            # leaving the business all sit with the same oversight role.
+            "accounting.view_expense",
+            "accounting.add_expense",
+            "accounting.change_expense",
+            "accounting.delete_expense",
+            "accounting.approve_expense",
+            "accounting.manage_expense_categories",
+            "accounting.view_financial_overview",
+            "accounting.view_reports",
             # Re-declaring a document the OBR refused is a fiscal correction,
             # so it sits with financial oversight rather than the counter.
             "invoicing.declare_invoice",
@@ -288,6 +334,10 @@ ROLES: list[dict] = [
                 "inventory.view_valuation",
                 "sales.view_margin",
                 "partners.view_statement",
+                # Money leaving the business is squarely within an audit remit;
+                # these are read-only surfaces, so they carry no write risk.
+                "accounting.view_financial_overview",
+                "accounting.view_reports",
             }
         ),
     },

@@ -4,7 +4,16 @@ from rest_framework import serializers
 
 from apps.core.fields import MoneySerializerField
 
-from .models import GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine
+from .models import (
+    GoodsReceipt,
+    GoodsReceiptLine,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SupplierInvoice,
+    SupplierPayment,
+    SupplierPaymentAllocation,
+    SupplierPaymentMethod,
+)
 
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
@@ -269,6 +278,269 @@ class GoodsReceiptSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class SupplierInvoiceSerializer(serializers.Serializer):
+class SupplierInvoiceReferenceSerializer(serializers.Serializer):
+    """
+    Payload for attaching a supplier's invoice reference to a purchase order.
+
+    Distinct from `SupplierInvoiceSerializer` below, which represents the
+    payable document itself. This one only records the number and date on the
+    order for three-way matching and creates nothing.
+    """
+
     invoice_number = serializers.CharField(max_length=64)
     invoice_date = serializers.DateField()
+
+
+# ---------------------------------------------------------------------------
+# Payables
+# ---------------------------------------------------------------------------
+
+
+class SupplierPaymentAllocationSerializer(serializers.ModelSerializer):
+    invoice_number = serializers.CharField(
+        source="supplier_invoice.invoice_number", read_only=True,
+    )
+    invoice_reference = serializers.CharField(
+        source="supplier_invoice.reference", read_only=True,
+    )
+    payment_reference = serializers.CharField(source="payment.reference", read_only=True)
+    payment_date = serializers.DateField(source="payment.payment_date", read_only=True)
+    payment_method = serializers.CharField(source="payment.method", read_only=True)
+    is_reversed = serializers.BooleanField(source="payment.is_reversed", read_only=True)
+    amount = MoneySerializerField(read_only=True)
+
+    class Meta:
+        model = SupplierPaymentAllocation
+        fields = [
+            "id", "payment", "payment_reference", "payment_date", "payment_method",
+            "supplier_invoice", "invoice_number", "invoice_reference",
+            "amount", "is_reversed", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class SupplierInvoiceSerializer(serializers.ModelSerializer):
+    """A payable, with everything the UI needs to render its progress."""
+
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+    supplier_code = serializers.CharField(source="supplier.supplier_code", read_only=True)
+    order_number = serializers.CharField(
+        source="purchase_order.order_number", read_only=True, default=None,
+    )
+    payment_allocations = SupplierPaymentAllocationSerializer(many=True, read_only=True)
+
+    subtotal = MoneySerializerField(read_only=True)
+    tax_amount = MoneySerializerField(read_only=True)
+    freight_cost = MoneySerializerField(read_only=True)
+    customs_duty = MoneySerializerField(read_only=True)
+    other_charges = MoneySerializerField(read_only=True)
+    total_amount = MoneySerializerField(read_only=True)
+    paid_amount = MoneySerializerField(read_only=True)
+    balance_due = MoneySerializerField(read_only=True)
+
+    is_open = serializers.BooleanField(read_only=True)
+    is_overdue = serializers.BooleanField(read_only=True)
+    is_cancelled = serializers.BooleanField(read_only=True)
+    days_overdue = serializers.IntegerField(read_only=True)
+    # Drives the progress bar. Sent from the server so the figure on screen is
+    # the one the server computed, not a second implementation in the client
+    # that could round differently.
+    payment_progress = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True,
+    )
+
+    class Meta:
+        model = SupplierInvoice
+        fields = [
+            "id", "reference", "invoice_number", "status",
+            "supplier", "supplier_code", "supplier_name",
+            "purchase_order", "order_number",
+            "invoice_date", "received_date", "due_date",
+            "subtotal", "tax_amount", "freight_cost", "customs_duty",
+            "other_charges", "total_amount", "paid_amount", "balance_due",
+            "currency", "exchange_rate",
+            "is_open", "is_overdue", "is_cancelled", "days_overdue",
+            "payment_progress",
+            "notes", "cancelled_at", "cancellation_reason",
+            "payment_allocations", "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class SupplierInvoiceListSerializer(serializers.ModelSerializer):
+    """List rows. Omits the allocations, which the table does not render."""
+
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+    order_number = serializers.CharField(
+        source="purchase_order.order_number", read_only=True, default=None,
+    )
+    total_amount = MoneySerializerField(read_only=True)
+    paid_amount = MoneySerializerField(read_only=True)
+    balance_due = MoneySerializerField(read_only=True)
+    is_overdue = serializers.BooleanField(read_only=True)
+    days_overdue = serializers.IntegerField(read_only=True)
+    payment_progress = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True,
+    )
+
+    class Meta:
+        model = SupplierInvoice
+        fields = [
+            "id", "reference", "invoice_number", "status",
+            "supplier", "supplier_name", "purchase_order", "order_number",
+            "invoice_date", "due_date",
+            "total_amount", "paid_amount", "balance_due",
+            "payment_progress", "is_overdue", "days_overdue", "currency",
+        ]
+        read_only_fields = fields
+
+
+class SupplierInvoiceCreateSerializer(serializers.Serializer):
+    """
+    Input for recording a supplier's bill.
+
+    `total_amount` is optional: when omitted the service derives it from the
+    components. Supplying it wins, because the supplier's stated total is
+    authoritative even where it disagrees with the sum of its parts.
+    """
+
+    supplier = serializers.UUIDField()
+    invoice_number = serializers.CharField(max_length=64)
+    purchase_order = serializers.UUIDField(required=False, allow_null=True)
+
+    invoice_date = serializers.DateField(required=False)
+    received_date = serializers.DateField(required=False)
+    # Omitted, the service derives it from the supplier's payment terms.
+    due_date = serializers.DateField(required=False, allow_null=True)
+
+    subtotal = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
+    )
+    tax_amount = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
+    )
+    freight_cost = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
+    )
+    customs_duty = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
+    )
+    other_charges = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
+    )
+    total_amount = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False,
+    )
+
+    currency = serializers.CharField(max_length=3, required=False, allow_blank=True)
+    exchange_rate = serializers.DecimalField(
+        max_digits=18, decimal_places=6, min_value=Decimal("0.000001"), required=False,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class AllocationInputSerializer(serializers.Serializer):
+    supplier_invoice = serializers.UUIDField()
+    amount = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0.0001"),
+    )
+
+
+class SupplierPaymentSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+    supplier_code = serializers.CharField(source="supplier.supplier_code", read_only=True)
+    paid_by_name = serializers.CharField(
+        source="paid_by.get_full_name", read_only=True, default="",
+    )
+    allocations = SupplierPaymentAllocationSerializer(many=True, read_only=True)
+
+    amount = MoneySerializerField(read_only=True)
+    allocated_amount = MoneySerializerField(read_only=True)
+    unallocated_amount = MoneySerializerField(read_only=True)
+
+    class Meta:
+        model = SupplierPayment
+        fields = [
+            "id", "reference", "supplier", "supplier_code", "supplier_name",
+            "payment_date", "amount", "allocated_amount", "unallocated_amount",
+            "method", "payment_reference", "bank_reference", "bank_account",
+            "paid_by", "paid_by_name", "notes",
+            "is_reversed", "reversed_at", "reversal_reason",
+            "allocations", "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class SupplierPaymentListSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+    amount = MoneySerializerField(read_only=True)
+    allocated_amount = MoneySerializerField(read_only=True)
+    unallocated_amount = MoneySerializerField(read_only=True)
+
+    class Meta:
+        model = SupplierPayment
+        fields = [
+            "id", "reference", "supplier", "supplier_name",
+            "payment_date", "amount", "allocated_amount", "unallocated_amount",
+            "method", "payment_reference", "bank_reference", "is_reversed",
+        ]
+        read_only_fields = fields
+
+
+class SupplierPaymentCreateSerializer(serializers.Serializer):
+    """
+    Input for paying a supplier.
+
+    `allocations` and `invoice_ids` are alternative ways to direct the money
+    and are mutually exclusive — sending both is a contradiction about where
+    the payment goes, so it is refused rather than resolved by precedence.
+    """
+
+    supplier = serializers.UUIDField()
+    amount = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0.0001"),
+    )
+    method = serializers.ChoiceField(
+        choices=SupplierPaymentMethod.choices, default=SupplierPaymentMethod.BANK_TRANSFER,
+    )
+    payment_date = serializers.DateField(required=False)
+    payment_reference = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    bank_reference = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    bank_account = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    invoice_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=False,
+    )
+    allocations = AllocationInputSerializer(many=True, required=False, allow_empty=False)
+
+    def validate(self, attrs):
+        if attrs.get("allocations") and attrs.get("invoice_ids"):
+            raise serializers.ValidationError(
+                "Send either `allocations` (explicit amounts) or `invoice_ids` "
+                "(settle oldest first), not both."
+            )
+        return attrs
+
+
+class AllocatePaymentSerializer(serializers.Serializer):
+    allocations = AllocationInputSerializer(many=True, allow_empty=False)
+
+
+class ReverseSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=255)
+
+
+class SupplierBalanceSerializer(serializers.Serializer):
+    """A supplier's payables position, for the outstanding-balances report."""
+
+    supplier_id = serializers.CharField()
+    supplier_code = serializers.CharField()
+    supplier_name = serializers.CharField()
+    currency = serializers.CharField()
+    invoice_count = serializers.IntegerField()
+    total_invoiced = MoneySerializerField()
+    total_paid = MoneySerializerField()
+    outstanding_balance = MoneySerializerField()
+    overdue_amount = MoneySerializerField()
+    oldest_due_date = serializers.DateField(allow_null=True)

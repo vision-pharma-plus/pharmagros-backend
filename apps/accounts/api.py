@@ -14,7 +14,7 @@ from apps.core.middleware import client_ip
 from apps.core.permissions import HasPermission
 
 from . import services
-from .models import Permission, Role, User
+from .models import Permission, Role, User, UserSession
 from .serializers import (
     LanguageSerializer,
     PasswordChangeSerializer,
@@ -36,13 +36,32 @@ class LoginView(TokenObtainPairView):
 
     @extend_schema(tags=["auth"], summary="Log in")
     def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        if response.status_code == status.HTTP_200_OK:
-            email = request.data.get("email") or request.data.get("username", "")
-            user = User.objects.filter(email__iexact=email).first()
-            if user:
-                services.record_login(user, ip=client_ip(request), success=True)
-        return response
+        """
+        Authenticate and open a tracked session.
+
+        The token pair is re-minted through `get_token_with_session` rather
+        than taken from the serializer's own output, so the tokens the client
+        receives are the ones bound to the `UserSession` row. Previously the
+        session was never recorded at all, which left "sign out everywhere",
+        the administrator's session list, and the revocation performed on
+        suspension or password change all operating on an empty table.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.user
+        refresh, access = serializer.get_token_with_session(
+            user,
+            ip=client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
+        )
+
+        data = dict(serializer.validated_data)
+        data["refresh"] = str(refresh)
+        data["access"] = str(access)
+
+        services.record_login(user, ip=client_ip(request), success=True)
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class RefreshView(TokenRefreshView):
@@ -51,7 +70,40 @@ class RefreshView(TokenRefreshView):
 
     @extend_schema(tags=["auth"], summary="Refresh access token")
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        """
+        Rotate the token pair, keeping the session binding intact.
+
+        With ROTATE_REFRESH_TOKENS the incoming refresh token is replaced, so
+        the session row is re-pointed at the new jti. Refreshing therefore
+        extends a session rather than orphaning it — and a session revoked in
+        the meantime cannot be refreshed back into life.
+        """
+        from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        try:
+            old = RefreshToken(request.data.get("refresh"))
+        except TokenError as exc:
+            raise InvalidToken(exc.args[0]) from exc
+
+        session_jti = old.get("session_jti")
+        if session_jti:
+            session = UserSession.objects.filter(jti=session_jti).first()
+            if session is None or not session.is_active:
+                raise InvalidToken(
+                    _("This session has been revoked. Please sign in again.")
+                )
+
+        response = super().post(request, *args, **kwargs)
+
+        if response.status_code == status.HTTP_200_OK and session_jti:
+            services.rotate_session(
+                session_jti,
+                response.data,
+                ip=client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            )
+        return response
 
 
 class LogoutView(APIView):
@@ -71,7 +123,18 @@ class LogoutView(APIView):
             try:
                 from rest_framework_simplejwt.tokens import RefreshToken
 
-                RefreshToken(refresh).blacklist()
+                token = RefreshToken(refresh)
+                # Mark the session closed as well as blacklisting the token.
+                # Blacklisting alone stops the refresh but leaves the row
+                # looking live in the administrator's session list, and leaves
+                # the access token passing the per-request session check for
+                # the remainder of its lifetime.
+                session_jti = token.get("session_jti") or token.get("jti")
+                if session_jti:
+                    session = UserSession.objects.filter(jti=session_jti).first()
+                    if session:
+                        services.revoke_session(session, reason="Signed out")
+                token.blacklist()
             except Exception:
                 # An already-expired or malformed token is not an error worth
                 # failing the logout over — the client is discarding it anyway.

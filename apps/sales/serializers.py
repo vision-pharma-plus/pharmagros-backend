@@ -143,6 +143,48 @@ class SaleCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
+class SaleUpdateSerializer(serializers.Serializer):
+    """
+    Amendment payload for a draft sale.
+
+    Every field is optional so a caller may send only what changed. Omitting
+    `lines` leaves the existing lines untouched; sending it replaces them all,
+    which is what `services.update_sale` does and why an empty list is refused
+    rather than silently emptying the sale.
+    """
+
+    customer = serializers.UUIDField(required=False)
+    warehouse = serializers.UUIDField(required=False)
+    sale_type = serializers.ChoiceField(choices=SaleType.choices, required=False)
+    lines = SaleLineWriteSerializer(many=True, required=False, allow_empty=False)
+    sale_date = serializers.DateTimeField(required=False)
+    discount_percent = serializers.DecimalField(
+        max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False,
+    )
+    customer_order_reference = serializers.CharField(
+        max_length=64, required=False, allow_blank=True,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                "Provide at least one field to update."
+            )
+        return attrs
+
+
+class DeleteDraftSerializer(serializers.Serializer):
+    """
+    Optional context for deleting a draft.
+
+    The reason is not required — a draft abandoned mid-entry rarely has one
+    worth recording — but it is written to the audit entry when given.
+    """
+
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+
 class ConfirmSaleSerializer(serializers.Serializer):
     """
     Confirmation payload.

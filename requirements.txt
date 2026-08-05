@@ -36,6 +36,10 @@ openpyxl==3.1.5                    # Excel export
 
 # ---- External services ----------------------------------------------------
 requests==2.32.3                   # OBR EBMS declaration transport
+# Fallback translation engine for the reader-triggered "Translate" control.
+# Was installed in dev but undeclared, so deployed environments silently lost
+# the fallback and every translation returned the untranslated source.
+deep-translator==1.11.4
 
 # ---- Ops ------------------------------------------------------------------
 gunicorn==23.0.0

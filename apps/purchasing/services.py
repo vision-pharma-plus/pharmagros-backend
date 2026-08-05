@@ -12,9 +12,10 @@ Two controls carry most of the weight here:
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
@@ -25,12 +26,18 @@ from apps.core.money import compute_line, q_internal, sum_money
 from apps.core.numbering import next_number
 
 from .models import (
+    OPEN_SUPPLIER_INVOICE_STATUSES,
     RECEIVABLE_STATUSES,
     GoodsReceipt,
     GoodsReceiptLine,
     PurchaseOrder,
     PurchaseOrderLine,
     PurchaseOrderStatus,
+    SupplierInvoice,
+    SupplierInvoiceStatus,
+    SupplierPayment,
+    SupplierPaymentAllocation,
+    SupplierPaymentMethod,
 )
 
 ZERO = Decimal("0")
@@ -660,3 +667,740 @@ def record_supplier_invoice(
         actor=actor,
     )
     return order
+
+
+# ---------------------------------------------------------------------------
+# Payables: supplier invoices and their settlement
+# ---------------------------------------------------------------------------
+
+
+@transaction.atomic
+def create_supplier_invoice(
+    *,
+    supplier,
+    invoice_number: str,
+    total_amount: Decimal | None = None,
+    subtotal: Decimal = ZERO,
+    tax_amount: Decimal = ZERO,
+    freight_cost: Decimal = ZERO,
+    customs_duty: Decimal = ZERO,
+    other_charges: Decimal = ZERO,
+    invoice_date=None,
+    received_date=None,
+    due_date=None,
+    purchase_order: PurchaseOrder | None = None,
+    currency: str = "",
+    exchange_rate: Decimal | None = None,
+    notes: str = "",
+    actor=None,
+) -> SupplierInvoice:
+    """
+    Record a bill received from a supplier.
+
+    `total_amount` may be given explicitly or left to be derived from the
+    component amounts. Both are supported deliberately: a clerk copying a
+    foreign invoice usually has only the grand total in front of them, while an
+    invoice matched against an order is entered component by component. When
+    the caller supplies a total, it wins — the supplier's stated total is the
+    authoritative figure even where it does not equal the sum of its parts, and
+    quietly recomputing it would hide exactly the discrepancy that matters.
+
+    The due date falls back to the supplier's payment terms, which is what
+    makes the outstanding-balance and overdue reports work without the clerk
+    having to compute a date on every entry.
+    """
+    invoice_date = invoice_date or timezone.localdate()
+
+    if not invoice_number or not invoice_number.strip():
+        raise BusinessRuleViolation(
+            _("The supplier's invoice number is required."), code="invoice_number_required"
+        )
+    invoice_number = invoice_number.strip()
+
+    if purchase_order is not None and purchase_order.supplier_id != supplier.pk:
+        raise BusinessRuleViolation(
+            _("Purchase order %(order)s belongs to a different supplier.")
+            % {"order": purchase_order.order_number},
+            code="order_supplier_mismatch",
+        )
+
+    # The same supplier billing the same number twice is nearly always a
+    # duplicate entry, and paying it twice is the expensive outcome the check
+    # exists to prevent. Reported here rather than left to the unique
+    # constraint so the operator gets the existing document, not a 500.
+    duplicate = SupplierInvoice.objects.filter(
+        supplier=supplier, invoice_number=invoice_number
+    ).first()
+    if duplicate is not None:
+        raise BusinessRuleViolation(
+            _("Invoice %(number)s from %(supplier)s has already been recorded as %(reference)s.")
+            % {
+                "number": invoice_number,
+                "supplier": supplier.name,
+                "reference": duplicate.reference,
+            },
+            code="duplicate_supplier_invoice",
+            details={
+                "supplier_invoice_id": str(duplicate.pk),
+                "reference": duplicate.reference,
+            },
+        )
+
+    subtotal = q_internal(subtotal)
+    tax_amount = q_internal(tax_amount)
+    freight_cost = q_internal(freight_cost)
+    customs_duty = q_internal(customs_duty)
+    other_charges = q_internal(other_charges)
+
+    if total_amount is None:
+        total_amount = sum_money(
+            [subtotal, tax_amount, freight_cost, customs_duty, other_charges]
+        )
+    else:
+        total_amount = q_internal(total_amount)
+
+    if total_amount <= ZERO:
+        raise BusinessRuleViolation(
+            _("A supplier invoice must be for more than zero."), code="invalid_amount"
+        )
+
+    if due_date is None:
+        due_date = invoice_date + timedelta(days=supplier.payment_term_days)
+
+    invoice = SupplierInvoice.objects.create(
+        reference=next_number("purchasing.supplier_invoice", when=invoice_date),
+        invoice_number=invoice_number,
+        supplier=supplier,
+        purchase_order=purchase_order,
+        status=SupplierInvoiceStatus.AWAITING_PAYMENT,
+        invoice_date=invoice_date,
+        received_date=received_date or timezone.localdate(),
+        due_date=due_date,
+        subtotal=subtotal,
+        tax_amount=tax_amount,
+        freight_cost=freight_cost,
+        customs_duty=customs_duty,
+        other_charges=other_charges,
+        total_amount=total_amount,
+        paid_amount=ZERO,
+        balance_due=total_amount,
+        currency=currency or supplier.currency,
+        exchange_rate=q_internal(exchange_rate) if exchange_rate is not None else Decimal("1"),
+        notes=notes,
+        created_by=actor,
+    )
+
+    # Keep the order's own reference fields in step, so three-way matching from
+    # the order side still works for anyone reading it.
+    if purchase_order is not None and not purchase_order.supplier_invoice_number:
+        purchase_order.supplier_invoice_number = invoice_number
+        purchase_order.supplier_invoice_date = invoice_date
+        purchase_order.save(
+            update_fields=[
+                "supplier_invoice_number", "supplier_invoice_date", "updated_at",
+            ]
+        )
+
+    record(
+        AuditAction.CREATE,
+        SupplierInvoice._meta.label,
+        entity_id=str(invoice.pk),
+        entity_label=invoice.reference,
+        new_value=snapshot(invoice),
+        notes=(
+            f"Supplier invoice {invoice_number} from {supplier.name} recorded: "
+            f"{total_amount} {invoice.currency}"
+        ),
+        actor=actor,
+    )
+    return invoice
+
+
+def _recompute_supplier_invoice_state(invoice: SupplierInvoice) -> SupplierInvoice:
+    """
+    Re-derive an invoice's paid amount, balance and status from its allocations.
+
+    Derived on every change rather than incremented, for the same reason
+    `partners.recompute_balance` is: a running tally silently accumulates error
+    from every reversal and correction, and a wrong payable balance is only
+    discovered when a supplier disputes their statement.
+
+    Allocations belonging to reversed payments are excluded — the money came
+    back, so it no longer settles anything.
+    """
+    paid = (
+        SupplierPaymentAllocation.objects.filter(
+            supplier_invoice=invoice, payment__is_reversed=False,
+        ).aggregate(total=models.Sum("amount"))["total"]
+        or ZERO
+    )
+    paid = q_internal(paid)
+
+    invoice.paid_amount = paid
+    invoice.balance_due = q_internal(invoice.total_amount - paid)
+
+    # A cancelled invoice keeps that status regardless of what was paid against
+    # it; the cancellation is a decision about the document, not a balance.
+    if invoice.status != SupplierInvoiceStatus.CANCELLED:
+        if invoice.balance_due <= ZERO:
+            invoice.status = SupplierInvoiceStatus.PAID
+        elif paid > ZERO:
+            invoice.status = SupplierInvoiceStatus.PARTIALLY_PAID
+        elif invoice.due_date and invoice.due_date < timezone.localdate():
+            invoice.status = SupplierInvoiceStatus.OVERDUE
+        else:
+            invoice.status = SupplierInvoiceStatus.AWAITING_PAYMENT
+
+    invoice.save(
+        update_fields=["paid_amount", "balance_due", "status", "updated_at"]
+    )
+    return invoice
+
+
+def _sync_supplier_payment_allocated(payment: SupplierPayment) -> SupplierPayment:
+    """Bring a payment's allocated_amount back in line with its allocations."""
+    allocated = (
+        payment.allocations.aggregate(total=models.Sum("amount"))["total"] or ZERO
+    )
+    payment.allocated_amount = q_internal(allocated)
+    payment.save(update_fields=["allocated_amount", "updated_at"])
+    return payment
+
+
+def _settleable_supplier_invoices(supplier, invoice_ids=None):
+    """
+    Open invoices for a supplier, oldest due first.
+
+    Oldest-first is the default because it is what avoids late-payment
+    penalties and keeps a supplier relationship intact. When specific invoices
+    are named, that order is preserved among them.
+    """
+    queryset = SupplierInvoice.objects.select_for_update().filter(
+        supplier=supplier,
+        status__in=OPEN_SUPPLIER_INVOICE_STATUSES,
+        deleted_at__isnull=True,
+    )
+    if invoice_ids:
+        queryset = queryset.filter(pk__in=invoice_ids)
+    # Nulls last: an invoice with no due date is not more urgent than one with
+    # a date that has passed.
+    return queryset.order_by(models.F("due_date").asc(nulls_last=True), "invoice_date")
+
+
+@transaction.atomic
+def record_supplier_payment(
+    *,
+    supplier,
+    amount: Decimal,
+    method: str = SupplierPaymentMethod.BANK_TRANSFER,
+    payment_date=None,
+    payment_reference: str = "",
+    bank_reference: str = "",
+    bank_account: str = "",
+    notes: str = "",
+    invoice_ids: list | None = None,
+    allocations: list[dict] | None = None,
+    actor=None,
+) -> SupplierPayment:
+    """
+    Record a payment to a supplier and allocate it against their open invoices.
+
+    Three ways to say where the money goes, in decreasing specificity:
+
+      * `allocations` — explicit amounts per invoice. Used when a payment
+        settles part of one invoice and all of another, which no automatic
+        rule can infer.
+      * `invoice_ids` — settle these invoices, oldest due first.
+      * neither — settle the supplier's open invoices, oldest due first.
+
+    Anything left over stays on the payment as unallocated credit: money paid
+    on account, visible on the supplier's balance and available to allocate
+    when the next invoice arrives. It is not silently discarded, because it is
+    real money that left the bank.
+
+    Naming an invoice that cannot take the money is refused rather than
+    quietly re-aimed — the same rule as on the customer side. Silently paying a
+    different invoice produces a correct-looking record that settles the wrong
+    debt, and nobody finds out until a reconciliation.
+    """
+    amount = q_internal(amount)
+    if amount <= ZERO:
+        raise BusinessRuleViolation(
+            _("A payment amount must be greater than zero."), code="invalid_amount"
+        )
+
+    payment_date = payment_date or timezone.localdate()
+
+    payment = SupplierPayment.objects.create(
+        reference=next_number("purchasing.supplier_payment", when=payment_date),
+        supplier=supplier,
+        payment_date=payment_date,
+        amount=amount,
+        method=method,
+        payment_reference=payment_reference,
+        bank_reference=bank_reference,
+        bank_account=bank_account,
+        notes=notes,
+        paid_by=actor,
+        created_by=actor,
+    )
+
+    if allocations:
+        remaining = _allocate_supplier_payment_explicit(
+            payment, supplier, allocations, amount, actor=actor
+        )
+    else:
+        open_invoices = list(_settleable_supplier_invoices(supplier, invoice_ids))
+        if invoice_ids:
+            _reject_unsettleable_supplier_invoices(supplier, invoice_ids, open_invoices)
+        remaining = _allocate_supplier_payment(payment, open_invoices, amount, actor=actor)
+
+    _sync_supplier_payment_allocated(payment)
+
+    record(
+        AuditAction.CREATE,
+        SupplierPayment._meta.label,
+        entity_id=str(payment.pk),
+        entity_label=payment.reference,
+        new_value={
+            "supplier": supplier.supplier_code,
+            "amount": str(amount),
+            "allocated": str(payment.allocated_amount),
+            "unallocated": str(remaining),
+            "method": method,
+            "bank_reference": bank_reference,
+        },
+        notes=f"Supplier payment recorded: {payment.reference} to {supplier.name}",
+        actor=actor,
+    )
+    return payment
+
+
+def _allocate_supplier_payment(
+    payment: SupplierPayment, invoices, amount: Decimal, *, actor=None
+) -> Decimal:
+    """Spread `amount` across `invoices` in order, settling each in turn."""
+    remaining = amount
+
+    for invoice in invoices:
+        if remaining <= ZERO:
+            break
+        applied = min(remaining, invoice.balance_due)
+        if applied <= ZERO:
+            continue
+
+        SupplierPaymentAllocation.objects.create(
+            payment=payment,
+            supplier_invoice=invoice,
+            amount=applied,
+            created_by=actor,
+        )
+        _recompute_supplier_invoice_state(invoice)
+        remaining = q_internal(remaining - applied)
+
+    return remaining
+
+
+def _allocate_supplier_payment_explicit(
+    payment: SupplierPayment, supplier, allocations: list[dict], amount: Decimal, *, actor=None
+) -> Decimal:
+    """
+    Apply caller-specified amounts to named invoices.
+
+    Every line is validated before any is written, so a payload with one bad
+    line does not leave the payment half-allocated.
+    """
+    invoice_ids = [entry["supplier_invoice"] for entry in allocations]
+    invoices = {
+        inv.pk: inv
+        for inv in SupplierInvoice.objects.select_for_update().filter(
+            pk__in=invoice_ids, supplier=supplier, deleted_at__isnull=True
+        )
+    }
+
+    missing = set(invoice_ids) - set(invoices)
+    if missing:
+        raise BusinessRuleViolation(
+            _("One or more invoices do not exist or belong to a different supplier."),
+            code="invalid_supplier_invoice",
+            details={"supplier_invoice_ids": [str(m) for m in missing]},
+        )
+
+    total_requested = sum_money(q_internal(entry["amount"]) for entry in allocations)
+    if total_requested > amount:
+        raise BusinessRuleViolation(
+            _("The allocations total %(allocated)s, which is more than the payment of %(amount)s.")
+            % {"allocated": total_requested, "amount": amount},
+            code="allocation_exceeds_payment",
+            details={"allocated": str(total_requested), "payment_amount": str(amount)},
+        )
+
+    for entry in allocations:
+        invoice = invoices[entry["supplier_invoice"]]
+        applied = q_internal(entry["amount"])
+
+        if applied <= ZERO:
+            raise BusinessRuleViolation(
+                _("An allocated amount must be greater than zero."),
+                code="invalid_allocation_amount",
+            )
+        if invoice.is_cancelled:
+            raise BusinessRuleViolation(
+                _("Invoice %(number)s has been cancelled and cannot be paid.")
+                % {"number": invoice.invoice_number},
+                code="invoice_cancelled",
+            )
+        # Overpaying a specific invoice is refused rather than spilled onto the
+        # next one: the operator named this invoice and this amount, and
+        # quietly moving the excess elsewhere contradicts an explicit
+        # instruction.
+        if applied > invoice.balance_due:
+            raise BusinessRuleViolation(
+                _("Cannot allocate %(amount)s to invoice %(number)s: only %(balance)s is outstanding.")
+                % {
+                    "amount": applied,
+                    "number": invoice.invoice_number,
+                    "balance": invoice.balance_due,
+                },
+                code="allocation_exceeds_balance",
+                details={
+                    "supplier_invoice_id": str(invoice.pk),
+                    "balance_due": str(invoice.balance_due),
+                },
+            )
+
+    for entry in allocations:
+        invoice = invoices[entry["supplier_invoice"]]
+        SupplierPaymentAllocation.objects.create(
+            payment=payment,
+            supplier_invoice=invoice,
+            amount=q_internal(entry["amount"]),
+            created_by=actor,
+        )
+        _recompute_supplier_invoice_state(invoice)
+
+    return q_internal(amount - total_requested)
+
+
+def _reject_unsettleable_supplier_invoices(supplier, invoice_ids, open_invoices) -> None:
+    """Refuse named invoices that cannot take money, explaining which and why."""
+    settleable = {inv.pk for inv in open_invoices}
+    unsettleable = [pk for pk in invoice_ids if pk not in settleable]
+    if not unsettleable:
+        return
+
+    known = {
+        inv.pk: inv
+        for inv in SupplierInvoice.objects.filter(pk__in=unsettleable, deleted_at__isnull=True)
+    }
+    details = {}
+    for pk in unsettleable:
+        invoice = known.get(pk)
+        if invoice is None:
+            details[str(pk)] = "not found"
+        elif invoice.supplier_id != supplier.pk:
+            details[str(pk)] = "belongs to another supplier"
+        else:
+            details[str(pk)] = f"status {invoice.status}"
+
+    raise BusinessRuleViolation(
+        _("One or more of the invoices named cannot receive a payment."),
+        code="unsettleable_supplier_invoice",
+        details={"invoices": details},
+    )
+
+
+@transaction.atomic
+def allocate_supplier_payment(
+    payment: SupplierPayment, *, allocations: list[dict], actor=None
+) -> SupplierPayment:
+    """
+    Allocate a payment's unallocated remainder to invoices.
+
+    The counterpart to paying on account: money paid ahead of an invoice is
+    matched to it once it arrives, without a second payment being invented.
+    """
+    if payment.is_reversed:
+        raise BusinessRuleViolation(
+            _("Payment %(reference)s has been reversed and cannot be allocated.")
+            % {"reference": payment.reference},
+            code="payment_reversed",
+        )
+
+    available = payment.unallocated_amount
+    if available <= ZERO:
+        raise BusinessRuleViolation(
+            _("Payment %(reference)s is already fully allocated.")
+            % {"reference": payment.reference},
+            code="payment_fully_allocated",
+        )
+
+    requested = sum_money(q_internal(entry["amount"]) for entry in allocations)
+    if requested > available:
+        raise BusinessRuleViolation(
+            _("Only %(available)s of this payment is unallocated; %(requested)s was requested.")
+            % {"available": available, "requested": requested},
+            code="allocation_exceeds_unallocated",
+            details={"unallocated": str(available), "requested": str(requested)},
+        )
+
+    _allocate_supplier_payment_explicit(
+        payment, payment.supplier, allocations, available, actor=actor
+    )
+    _sync_supplier_payment_allocated(payment)
+
+    record(
+        AuditAction.UPDATE,
+        SupplierPayment._meta.label,
+        entity_id=str(payment.pk),
+        entity_label=payment.reference,
+        new_value={
+            "allocated": str(payment.allocated_amount),
+            "unallocated": str(payment.unallocated_amount),
+        },
+        notes=f"Supplier payment {payment.reference} allocated",
+        actor=actor,
+    )
+    return payment
+
+
+@transaction.atomic
+def reverse_supplier_payment(
+    payment: SupplierPayment, *, reason: str, actor=None
+) -> SupplierPayment:
+    """
+    Reverse a supplier payment — a bounced cheque, or an entry made in error.
+
+    The payment and its allocations are retained and the row is flagged, rather
+    than deleted. Money that moved and came back is two events in the cash
+    record, and erasing the first would make the bank statement impossible to
+    reconcile against our books. The invoices it touched are re-derived, which
+    reopens them: `_recompute_supplier_invoice_state` ignores allocations
+    belonging to a reversed payment.
+    """
+    if not reason or not reason.strip():
+        raise BusinessRuleViolation(
+            _("A reason is required to reverse a payment."), code="reason_required"
+        )
+    if payment.is_reversed:
+        raise InvalidStateTransition(
+            _("Payment %(reference)s has already been reversed.")
+            % {"reference": payment.reference},
+            details={"reference": payment.reference},
+        )
+
+    affected = list(
+        SupplierInvoice.objects.select_for_update().filter(
+            payment_allocations__payment=payment
+        ).distinct()
+    )
+
+    payment.is_reversed = True
+    payment.reversed_at = timezone.now()
+    payment.reversal_reason = reason
+    payment.updated_by = actor
+    payment.save(
+        update_fields=[
+            "is_reversed", "reversed_at", "reversal_reason", "updated_by", "updated_at",
+        ]
+    )
+
+    for invoice in affected:
+        _recompute_supplier_invoice_state(invoice)
+
+    record(
+        AuditAction.CANCEL,
+        SupplierPayment._meta.label,
+        entity_id=str(payment.pk),
+        entity_label=payment.reference,
+        previous_value={"is_reversed": False},
+        new_value={"is_reversed": True, "amount": str(payment.amount)},
+        changed_fields=["is_reversed"],
+        notes=(
+            f"Supplier payment reversed: {reason} "
+            f"({len(affected)} invoice(s) reopened)"
+        ),
+        actor=actor,
+    )
+    return payment
+
+
+@transaction.atomic
+def cancel_supplier_invoice(
+    invoice: SupplierInvoice, *, reason: str, actor=None
+) -> SupplierInvoice:
+    """
+    Cancel a supplier invoice recorded in error.
+
+    Refused once money has been paid against it: the payment would be left
+    settling a document that no longer exists. Reverse the payment first, which
+    is the deliberate two-step that keeps the cash record honest.
+    """
+    if not reason or not reason.strip():
+        raise BusinessRuleViolation(
+            _("A reason is required to cancel an invoice."), code="reason_required"
+        )
+    if invoice.is_cancelled:
+        raise InvalidStateTransition(
+            _("This invoice has already been cancelled."),
+            details={"status": invoice.status},
+        )
+    if invoice.paid_amount > ZERO:
+        raise BusinessRuleViolation(
+            _("Invoice %(number)s has payments totalling %(paid)s against it. "
+              "Reverse them before cancelling.")
+            % {"number": invoice.invoice_number, "paid": invoice.paid_amount},
+            code="invoice_has_payments",
+            details={"paid_amount": str(invoice.paid_amount)},
+        )
+
+    previous_status = invoice.status
+    invoice.status = SupplierInvoiceStatus.CANCELLED
+    invoice.cancelled_at = timezone.now()
+    invoice.cancellation_reason = reason
+    invoice.balance_due = ZERO
+    invoice.updated_by = actor
+    invoice.save(
+        update_fields=[
+            "status", "cancelled_at", "cancellation_reason", "balance_due",
+            "updated_by", "updated_at",
+        ]
+    )
+
+    record(
+        AuditAction.CANCEL,
+        SupplierInvoice._meta.label,
+        entity_id=str(invoice.pk),
+        entity_label=invoice.reference,
+        previous_value={"status": previous_status},
+        new_value={"status": SupplierInvoiceStatus.CANCELLED},
+        changed_fields=["status"],
+        notes=f"Supplier invoice cancelled: {reason}",
+        actor=actor,
+    )
+    return invoice
+
+
+def supplier_outstanding_balance(supplier) -> Decimal:
+    """
+    What is currently owed to a supplier.
+
+    Derived from open invoices on every call rather than stored on the supplier
+    row. There is no cached field to drift, and the figure is cheap enough at
+    this scale that correctness is the better trade — the same reasoning as
+    `partners.recompute_balance`, arrived at from the opposite direction.
+    """
+    total = (
+        SupplierInvoice.objects.filter(
+            supplier=supplier,
+            status__in=OPEN_SUPPLIER_INVOICE_STATUSES,
+            deleted_at__isnull=True,
+        ).aggregate(total=models.Sum("balance_due"))["total"]
+        or ZERO
+    )
+    return q_internal(total)
+
+
+def supplier_balances(*, only_outstanding: bool = True) -> list[dict]:
+    """
+    Outstanding payables for every supplier, largest exposure first.
+
+    The "outstanding supplier balances" report, and the data behind the
+    supplier picker on the payment screen. Aggregated in the database rather
+    than by looping suppliers in Python: a per-supplier query here would be a
+    round trip for every row on a page that lists them all.
+
+    `total_invoiced` and `total_paid` cover open invoices only, so the three
+    figures on a row reconcile with each other. A supplier's full historical
+    turnover is a different question, answered by the payment report.
+    """
+    today = timezone.localdate()
+
+    rows = (
+        SupplierInvoice.objects.filter(
+            status__in=OPEN_SUPPLIER_INVOICE_STATUSES, deleted_at__isnull=True,
+        )
+        .values(
+            "supplier_id",
+            "supplier__supplier_code",
+            "supplier__name",
+            "supplier__currency",
+        )
+        .annotate(
+            invoice_count=models.Count("id"),
+            total_invoiced=models.Sum("total_amount"),
+            total_paid=models.Sum("paid_amount"),
+            outstanding_balance=models.Sum("balance_due"),
+            overdue_amount=models.Sum(
+                "balance_due",
+                filter=models.Q(due_date__lt=today),
+                default=ZERO,
+            ),
+            oldest_due_date=models.Min("due_date"),
+        )
+        .order_by("-outstanding_balance")
+    )
+
+    if only_outstanding:
+        rows = rows.filter(balance_due__gt=ZERO)
+
+    return [
+        {
+            "supplier_id": str(row["supplier_id"]),
+            "supplier_code": row["supplier__supplier_code"],
+            "supplier_name": row["supplier__name"],
+            "currency": row["supplier__currency"],
+            "invoice_count": row["invoice_count"],
+            "total_invoiced": q_internal(row["total_invoiced"] or ZERO),
+            "total_paid": q_internal(row["total_paid"] or ZERO),
+            "outstanding_balance": q_internal(row["outstanding_balance"] or ZERO),
+            "overdue_amount": q_internal(row["overdue_amount"] or ZERO),
+            "oldest_due_date": row["oldest_due_date"],
+        }
+        for row in rows
+    ]
+
+
+def supplier_payment_history(supplier, *, date_from=None, date_to=None) -> list[dict]:
+    """
+    Every payment made to a supplier, most recent first.
+
+    Each row carries the invoices it settled, so the history answers "what did
+    we pay them, and what for" in one pass rather than requiring a follow-up
+    query per payment.
+    """
+    payments = (
+        SupplierPayment.objects.filter(supplier=supplier, deleted_at__isnull=True)
+        .prefetch_related("allocations__supplier_invoice")
+        .order_by("-payment_date", "-reference")
+    )
+    if date_from:
+        payments = payments.filter(payment_date__gte=date_from)
+    if date_to:
+        payments = payments.filter(payment_date__lte=date_to)
+
+    return [
+        {
+            "id": str(payment.pk),
+            "reference": payment.reference,
+            "payment_date": payment.payment_date,
+            "amount": payment.amount,
+            "allocated_amount": payment.allocated_amount,
+            "unallocated_amount": payment.unallocated_amount,
+            "method": payment.method,
+            "payment_reference": payment.payment_reference,
+            "bank_reference": payment.bank_reference,
+            "is_reversed": payment.is_reversed,
+            "notes": payment.notes,
+            "allocations": [
+                {
+                    "supplier_invoice_id": str(allocation.supplier_invoice_id),
+                    "invoice_number": allocation.supplier_invoice.invoice_number,
+                    "reference": allocation.supplier_invoice.reference,
+                    "amount": allocation.amount,
+                }
+                for allocation in payment.allocations.all()
+            ],
+        }
+        for payment in payments
+    ]

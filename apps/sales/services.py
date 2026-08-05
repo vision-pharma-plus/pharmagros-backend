@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext as _
@@ -56,6 +57,76 @@ from .models import (
 )
 
 ZERO = Decimal("0")
+
+
+def max_manual_discount() -> Decimal:
+    """The configured ceiling on a manually entered discount, as a percentage."""
+    return q_internal(settings.MAX_MANUAL_DISCOUNT_PERCENT)
+
+
+def _check_discount_limit(discount_percent: Decimal, *, actor, is_standing: bool = False) -> None:
+    """
+    Refuse a manual discount above the configured ceiling.
+
+    Enforced here rather than in the serializer so every route into a sale is
+    covered — the API, a management command, an import. A rule that only the
+    HTTP layer knows about is one a background job can walk straight past.
+
+    `is_standing` marks a discount that came from the customer record rather
+    than the operator. Those are contractual terms agreed when the account was
+    opened, already governed by `partners.change_customer`, and are not
+    re-litigated at the counter: applying the ceiling to them would block
+    ordinary sales to a customer whose negotiated rate is 15%.
+
+    A user holding `sales.override_discount_limit` may exceed the ceiling. The
+    override is not silent — `create_sale` and `update_sale` record it in the
+    audit log, because a discount above policy is exactly the entry a later
+    review looks for.
+    """
+    if is_standing or discount_percent <= ZERO:
+        return
+
+    ceiling = max_manual_discount()
+    if discount_percent <= ceiling:
+        return
+
+    # No actor means a system/import context with no user to check a
+    # permission against. Fail closed: an unattributed caller is precisely the
+    # one that must not be able to grant an unlimited discount.
+    if actor is not None and actor.has_perm_code("sales.override_discount_limit"):
+        return
+
+    raise BusinessRuleViolation(
+        _(
+            "A discount of %(requested)s%% exceeds the maximum of %(max)s%%. "
+            "A manager or administrator must authorise this."
+        )
+        % {"requested": _fmt_percent(discount_percent), "max": _fmt_percent(ceiling)},
+        code="discount_limit_exceeded",
+        details={
+            "requested_percent": str(discount_percent),
+            "max_percent": str(ceiling),
+            "required_permission": "sales.override_discount_limit",
+        },
+    )
+
+
+def _fmt_percent(value: Decimal) -> str:
+    """Trim trailing zeros so 10.0000 reads as '10' in an error message."""
+    normalised = value.normalize()
+    # normalize() renders small integers in scientific notation (1E+1);
+    # quantising back to an integer exponent avoids '1E+1%' in the message.
+    if normalised == normalised.to_integral_value():
+        normalised = normalised.quantize(Decimal("1"))
+    return f"{normalised}"
+
+
+def _exceeds_discount_ceiling(sale: Sale) -> bool:
+    """Whether any discount on this sale sits above the configured ceiling."""
+    ceiling = max_manual_discount()
+    if sale.discount_percent > ceiling:
+        return True
+    return any(line.discount_percent > ceiling for line in sale.lines.all())
 
 
 def _invoice_lines_for(sale: Sale, lines=None) -> list[dict]:
@@ -126,6 +197,11 @@ def create_sale(
 
     sale_date = sale_date or timezone.now()
 
+    # The header discount is always operator-entered — there is no standing
+    # equivalent at sale level — so it is checked unconditionally.
+    discount_percent = q_internal(discount_percent)
+    _check_discount_limit(discount_percent, actor=actor)
+
     # Supplying a pharmacy whose operating licence has lapsed exposes the
     # wholesaler to regulatory action, so it is refused at creation rather
     # than discovered at delivery.
@@ -144,7 +220,7 @@ def create_sale(
         customer=customer,
         warehouse=warehouse,
         sale_date=sale_date,
-        discount_percent=q_internal(discount_percent),
+        discount_percent=discount_percent,
         salesperson=salesperson or actor,
         delivery_address=customer.address,
         customer_order_reference=customer_order_reference,
@@ -153,7 +229,7 @@ def create_sale(
     )
 
     for index, data in enumerate(lines, start=1):
-        _build_line(sale, index, data, customer)
+        _build_line(sale, index, data, customer, actor=actor)
 
     _recalculate_sale(sale)
     sale.save()
@@ -164,12 +240,170 @@ def create_sale(
         entity_id=str(sale.pk),
         entity_label=sale.sale_number,
         new_value=snapshot(sale),
+        # A discount above policy passed the gate above, which means someone
+        # with override authority granted it. Flagged here so it is findable
+        # in the audit log without re-deriving the ceiling from every row.
+        notes=(
+            f"Draft sale created with a discount above the "
+            f"{_fmt_percent(max_manual_discount())}% ceiling"
+            if _exceeds_discount_ceiling(sale)
+            else ""
+        ),
         actor=actor,
     )
     return sale
 
 
-def _build_line(sale: Sale, line_number: int, data: dict, customer) -> SaleLine:
+@transaction.atomic
+def update_sale(
+    sale: Sale,
+    *,
+    lines: list[dict] | None = None,
+    customer=None,
+    warehouse=None,
+    sale_type: str | None = None,
+    sale_date=None,
+    discount_percent: Decimal | None = None,
+    customer_order_reference: str | None = None,
+    notes: str | None = None,
+    actor=None,
+) -> Sale:
+    """
+    Amend a draft sale.
+
+    Only a DRAFT may be amended. Once confirmed, stock has moved and a document
+    exists in the customer's hands; from that point the sale is corrected by
+    cancellation or a return, never by editing what it says. That is the same
+    rule `Invoice.is_editable` encodes, and it is checked here rather than in
+    the API so no caller can route around it.
+
+    Lines are replaced wholesale rather than diffed. A draft holds no batch
+    allocations and no stock movements — nothing downstream references a line
+    row — so rebuilding them is both correct and far simpler than reconciling
+    an edit set. Any header field left as None keeps its current value, so a
+    caller may send just the field it changed.
+
+    Any reservations the draft held are released before rebuilding, otherwise
+    an edit that removes a line would leave its stock reserved indefinitely.
+    """
+    if sale.status != SaleStatus.DRAFT:
+        raise InvalidStateTransition(
+            _("Only a draft sale can be edited; this one is %(status)s.")
+            % {"status": sale.get_status_display()},
+            details={"current_status": sale.status},
+        )
+
+    previous = snapshot(sale)
+
+    if customer is not None:
+        sale.customer = customer
+        # The delivery address follows the customer unless the caller is also
+        # changing it; a stale address from the previous customer would send
+        # goods to the wrong pharmacy.
+        sale.delivery_address = customer.address
+    if warehouse is not None:
+        sale.warehouse = warehouse
+    if sale_type is not None:
+        sale.sale_type = sale_type
+    if sale_date is not None:
+        sale.sale_date = sale_date
+    if customer_order_reference is not None:
+        sale.customer_order_reference = customer_order_reference
+    if notes is not None:
+        sale.notes = notes
+    if discount_percent is not None:
+        discount_percent = q_internal(discount_percent)
+        _check_discount_limit(discount_percent, actor=actor)
+        sale.discount_percent = discount_percent
+
+    # Selling to a customer whose licence has since lapsed is refused on edit
+    # for the same reason as on creation — the draft may have been raised
+    # before the expiry date passed.
+    if sale.customer.licence_is_expired:
+        raise BusinessRuleViolation(
+            _("The operating licence for %(name)s expired on %(date)s. The sale cannot proceed until it is renewed.")
+            % {"name": sale.customer.business_name, "date": sale.customer.licence_expiry},
+            code="customer_licence_expired",
+            details={"licence_expiry": str(sale.customer.licence_expiry)},
+        )
+
+    if lines is not None:
+        if not lines:
+            raise BusinessRuleViolation(
+                _("A sale must contain at least one line."), code="empty_sale"
+            )
+
+        # Release before rebuilding: the reservations belong to the lines
+        # about to be discarded.
+        release_reservations(source_type="sales.Sale", source_id=str(sale.pk))
+        sale.lines.all().delete()
+
+        for index, data in enumerate(lines, start=1):
+            _build_line(sale, index, data, sale.customer, actor=actor)
+
+    _recalculate_sale(sale)
+    sale.updated_by = actor
+    sale.save()
+
+    record(
+        AuditAction.UPDATE,
+        Sale._meta.label,
+        entity_id=str(sale.pk),
+        entity_label=sale.sale_number,
+        previous_value=previous,
+        new_value=snapshot(sale),
+        notes=(
+            f"Draft sale amended with a discount above the "
+            f"{_fmt_percent(max_manual_discount())}% ceiling"
+            if _exceeds_discount_ceiling(sale)
+            else "Draft sale amended"
+        ),
+        actor=actor,
+    )
+    return sale
+
+
+@transaction.atomic
+def delete_draft_sale(sale: Sale, *, reason: str = "", actor=None) -> Sale:
+    """
+    Delete a draft sale.
+
+    Soft-deleted, like every other financial record: the row leaves the
+    operator's view but stays on file, so a numbered document that once
+    existed can still be accounted for. A gap in the sale series with nothing
+    behind it is exactly what an inspection asks about.
+
+    Restricted to drafts. A confirmed sale has moved stock and produced a
+    document, and is voided by `cancel_sale`, which reverses both — deleting it
+    would leave the warehouse short with no record of why.
+    """
+    if sale.status != SaleStatus.DRAFT:
+        raise InvalidStateTransition(
+            _("Only a draft sale can be deleted; this one is %(status)s. Cancel it instead.")
+            % {"status": sale.get_status_display()},
+            details={"current_status": sale.status},
+        )
+
+    # A draft may hold soft reservations against stock. Releasing them is the
+    # whole point of deleting the draft — otherwise the goods stay unavailable
+    # to other orders with nothing to show why.
+    release_reservations(source_type="sales.Sale", source_id=str(sale.pk))
+
+    sale.delete(actor=actor)
+
+    record(
+        AuditAction.DELETE,
+        Sale._meta.label,
+        entity_id=str(sale.pk),
+        entity_label=sale.sale_number,
+        previous_value={"status": SaleStatus.DRAFT, "total_amount": str(sale.total_amount)},
+        notes=f"Draft sale deleted{f': {reason}' if reason else ''}",
+        actor=actor,
+    )
+    return sale
+
+
+def _build_line(sale: Sale, line_number: int, data: dict, customer, *, actor=None) -> SaleLine:
     """Create a sale line, resolving price and VAT from the catalogue."""
     product = data["product"]
     quantity = q_internal(data["quantity"])
@@ -196,9 +430,15 @@ def _build_line(sale: Sale, line_number: int, data: dict, customer) -> SaleLine:
 
     # Line discount falls back to the customer's standing discount.
     discount_percent = data.get("discount_percent")
-    if discount_percent is None:
+    is_standing = discount_percent is None
+    if is_standing:
         discount_percent = customer.discount_percent
     discount_percent = q_internal(discount_percent)
+
+    # Only a discount the operator typed is capped. The customer's standing
+    # rate is a contractual term, not a counter decision — see
+    # `_check_discount_limit`.
+    _check_discount_limit(discount_percent, actor=actor, is_standing=is_standing)
 
     amounts = compute_line(quantity, unit_price, discount_percent, tax_rate)
 

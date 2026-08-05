@@ -29,6 +29,7 @@ class MedicineFilter(filters.FilterSet):
     min_price = filters.NumberFilter(field_name="selling_price", lookup_expr="gte")
     max_price = filters.NumberFilter(field_name="selling_price", lookup_expr="lte")
     requires_cold_chain = filters.BooleanFilter(method="filter_cold_chain")
+    ids = filters.CharFilter(method="filter_ids")
 
     class Meta:
         model = Medicine
@@ -36,6 +37,34 @@ class MedicineFilter(filters.FilterSet):
             "status", "category", "manufacturer", "dosage_form",
             "requires_prescription", "is_controlled", "is_vat_exempt",
         ]
+
+    def filter_ids(self, queryset, name, value):
+        """
+        Fetch a specific set of products by id, comma-separated.
+
+        Used when a screen already knows which products it needs and wants
+        their full records in one request — reopening a saved sale, for
+        instance, where each stored line carries only a product id but the
+        form needs the whole catalogue entry to render its picker.
+
+        Malformed ids are dropped rather than raising: this is a lookup by a
+        list the caller assembled, and one bad entry should not fail the whole
+        request. An entirely unparseable list returns nothing, which is the
+        honest answer to "none of these exist".
+        """
+        import uuid
+
+        valid = []
+        for raw in value.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                valid.append(uuid.UUID(raw))
+            except ValueError:
+                continue
+
+        return queryset.filter(pk__in=valid)
 
     def filter_search(self, queryset, name, value):
         """

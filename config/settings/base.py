@@ -64,6 +64,7 @@ LOCAL_APPS = [
     "apps.sales",
     "apps.invoicing",
     "apps.purchasing",
+    "apps.accounting",
     "apps.reporting",
     "apps.notifications",
 ]
@@ -177,12 +178,21 @@ AXES_LOCKOUT_CALLABLE = "apps.accounts.lockout.lockout_response"
 # DRF / JWT
 # ---------------------------------------------------------------------------
 REST_FRAMEWORK = {
+    # Rejects a token whose account has since been suspended, deactivated or
+    # had its sessions revoked. Plain JWTAuthentication trusts the token's
+    # claims for its full lifetime, which would leave a revoked session
+    # working until the access token expired.
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.core.authentication.StatefulJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         # Deny by default. Every endpoint must opt in to who may reach it.
         "rest_framework.permissions.IsAuthenticated",
+        # An account-state gate rather than per-endpoint authorisation: a user
+        # owing a password change must be stopped everywhere. Views that set
+        # their own `permission_classes` replace this list, so it is also
+        # applied defensively inside HasPermission.
+        "apps.core.permissions.PasswordChangeNotPending",
     ),
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
@@ -200,6 +210,9 @@ REST_FRAMEWORK = {
         "auth": "10/min",       # login / token endpoints
         "password_reset": "5/hour",
         "reports": "60/hour",   # report generation is expensive
+        # Each cache miss is a paid upstream call. Generous enough to read a
+        # page of notes, tight enough that a loop cannot run up a bill.
+        "translate": "120/hour",
         "default": "1000/hour",
     },
 }
@@ -284,6 +297,20 @@ MONEY_DECIMAL_PLACES = 4
 # Burundi standard VAT (TVA). Overridable per product/customer at runtime.
 DEFAULT_VAT_RATE = env.str("DEFAULT_VAT_RATE", default="18.00")
 
+# Ceiling on a manually entered sales discount, in percent.
+#
+# A discount is the one number on a sale an operator can change that directly
+# reduces revenue, and it needs no approval elsewhere in the flow — which makes
+# it the easiest lever for both honest error (a mistyped 50 for 5) and
+# deliberate abuse. Anything above this ceiling requires
+# `sales.override_discount_limit`, so exceeding it is a deliberate,
+# attributable act by someone with the authority to take it.
+#
+# A customer's *standing* contractual discount is not subject to this: it was
+# agreed when the account was set up, not chosen at the counter. See
+# `apps.sales.services._check_discount_limit`.
+MAX_MANUAL_DISCOUNT_PERCENT = env.str("MAX_MANUAL_DISCOUNT_PERCENT", default="10.00")
+
 # ---------------------------------------------------------------------------
 # Cache / Celery
 # ---------------------------------------------------------------------------
@@ -366,6 +393,19 @@ CORS_EXPOSE_HEADERS = ("x-request-id",)
 # (password reset, invoice delivery). Must be the public URL, not the
 # internal container address.
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
+
+# ---------------------------------------------------------------------------
+# Machine translation
+# ---------------------------------------------------------------------------
+# Powers the reader-triggered "Translate" control over user-entered notes.
+# Claude is preferred for its handling of pharmaceutical vocabulary; without a
+# key the service falls back to deep-translator/Google, and without that it
+# reports itself unavailable rather than echoing the untranslated source.
+#
+# Note this sends note text to a third party. Confirm that is acceptable for
+# your data before setting a key in production.
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+TRANSLATION_MODEL = env("TRANSLATION_MODEL", default="claude-sonnet-5")
 
 # ---------------------------------------------------------------------------
 # Email
