@@ -203,6 +203,81 @@ class TestSuperuserPermissionReporting:
         assert sorted(response.json()["permissions"]) == sorted(ALL_CODES)
 
 
+class TestPermissionListMatchesEnforcement:
+    """
+    The permission list drives what the UI offers; the API decides what it
+    honours. When they disagree the user is shown a door that will not open —
+    a menu entry that leads to "you do not have permission", which reads as a
+    broken application rather than as a boundary.
+
+    Account state is where they drifted apart: `effective_permissions()` unions
+    active roles and never consults it, while the request path refuses these
+    accounts before any codename is looked at.
+    """
+
+    def test_pending_password_change_reports_no_permissions(
+        self, auth_client, pharmacist
+    ):
+        """
+        The reachable case. `/auth/me/` is deliberately exempt from the
+        password-change block, so it answers 200 while every other endpoint
+        403s — previously handing back a full permission list that rendered a
+        complete menu in which nothing worked.
+        """
+        pharmacist.must_change_password = True
+        pharmacist.save(update_fields=["must_change_password"])
+
+        client = auth_client(pharmacist)
+        assert client.get("/api/v1/catalog/medicines/").status_code == 403
+
+        response = client.get("/api/v1/auth/me/")
+        assert response.status_code == 200
+        assert response.json()["permissions"] == []
+
+    def test_suspended_account_reports_no_permissions(self, pharmacist):
+        """
+        Asserted on the serializer rather than over HTTP: suspension is caught
+        at authentication, so the request never reaches a view to be asked.
+        The list must still agree with `has_perm_code`, which refuses a
+        suspended account every codename it holds.
+        """
+        from apps.accounts.serializers import UserSerializer
+
+        pharmacist.is_suspended = True
+        pharmacist.save(update_fields=["is_suspended"])
+
+        assert pharmacist.has_perm_code("catalog.view_medicine") is False
+        assert UserSerializer(pharmacist).data["permissions"] == []
+
+    def test_deactivated_account_reports_no_permissions(self, pharmacist):
+        from apps.accounts.serializers import UserSerializer
+
+        pharmacist.is_active = False
+        pharmacist.save(update_fields=["is_active"])
+
+        assert pharmacist.has_perm_code("catalog.view_medicine") is False
+        assert UserSerializer(pharmacist).data["permissions"] == []
+
+    def test_ordinary_account_still_reports_its_roles(self, auth_client, pharmacist):
+        """The guard above must not cost a healthy account its permissions."""
+        response = auth_client(pharmacist).get("/api/v1/auth/me/")
+        assert response.status_code == 200
+
+        reported = response.json()["permissions"]
+        assert reported == sorted(pharmacist.effective_permissions())
+        assert "catalog.view_medicine" in reported
+
+    def test_every_reported_permission_is_one_the_api_honours(self, pharmacist):
+        """
+        The invariant itself, stated directly: for a healthy account the list
+        the UI gates on and the check the API applies must agree code for code.
+        """
+        from apps.accounts.serializers import UserSerializer
+
+        for code in UserSerializer(pharmacist).data["permissions"]:
+            assert pharmacist.has_perm_code(code), code
+
+
 class TestAuditTrailExport:
     """
     `core.export_auditlog` was defined, granted and declared on the viewset,

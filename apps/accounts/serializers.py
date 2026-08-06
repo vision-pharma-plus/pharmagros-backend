@@ -87,11 +87,34 @@ class UserSerializer(serializers.ModelSerializer):
         every menu and button from the one account that can in fact use them —
         which is how an administrator locks themselves out of a UI whose API
         would have answered them.
+
+        This must answer exactly what the API would enforce, or the UI offers
+        doors the API refuses. `effective_permissions()` alone does not: it
+        unions active roles without consulting account state.
+
+        Two states make that difference visible:
+
+        * suspended or deactivated — `has_perm_code` refuses everything, but
+          the role union is unchanged;
+        * `must_change_password` — `PasswordChangeNotPending` blocks every
+          endpoint except this one, so a full permission list here renders a
+          complete menu in which nothing but the password form works.
+
+        The second is the reachable one: this endpoint is deliberately exempt
+        from that block, so it is the single place where a user still holding
+        a shared credential is handed their capabilities. Reporting none keeps
+        the shell honest — the frontend redirects to the password form anyway,
+        and a user who somehow lands elsewhere sees an empty shell rather than
+        a menu that 403s on every click.
         """
         if obj.is_superuser:
             from .rbac import ALL_CODES
 
             return sorted(ALL_CODES)
+        # Mirrors the guards the API applies before any codename is consulted,
+        # so the UI hides the surface instead of leading the user into a 403.
+        if not obj.is_active or obj.is_suspended or obj.must_change_password:
+            return []
         return sorted(obj.effective_permissions())
 
 
