@@ -150,7 +150,15 @@ def api_exception_handler(exc, context):
         message = _("The request could not be completed.")
         if isinstance(detail, dict) and "detail" in detail:
             message = detail["detail"]
-            code = getattr(detail["detail"], "code", "error")
+            # simplejwt's AuthenticationFailed carries a `code=` from the
+            # constructor as a sibling "code" key rather than on the
+            # ErrorDetail, whose own `.code` is always the generic
+            # "authentication_failed". Preferring the sibling keeps
+            # `session_revoked` and `session_not_found` distinguishable, which
+            # is what lets the client tell "signed out elsewhere" apart from
+            # "token expired" and skip a refresh that cannot succeed.
+            code = detail.get("code") or getattr(detail["detail"], "code", "error")
+            code = str(code)
             detail = {}
         response.data = {
             "error": {"code": code, "message": message, "details": detail}
