@@ -21,22 +21,23 @@
 **Part 2: Screen by screen**
 7. Sign in
 8. Dashboard
-9. Catalogue: Medicines, Categories, Manufacturers
+9. Catalogue: Medicines, Categories, Manufacturers, Units of measure
 10. Inventory: Receive stock, Stock levels, Batches, Movements, Warehouses, Expiry, Reconciliation
-11. Sales: New sale, Sales list, Returns
+11. Sales: New sale, Sales list, Sale detail, Returns
 12. Invoicing: Invoices, Invoice detail, Payments, Declaring to the OBR
-13. Purchasing: Purchase orders, New/Edit order, Order detail, Goods receipts
+13. Purchasing: Purchase orders, New/Edit order, Order detail, Goods receipts, Supplier invoices, Supplier payments
 14. Partners: Customers, Suppliers
-15. Reports
-16. Administration: Users, Roles, Audit log
-17. Notifications
-18. My profile
+15. Accounting: Financial overview, Expenses, Expense categories, Accounting reports
+16. Reports
+17. Administration: Users, Roles, Audit log
+18. Notifications
+19. My profile
 
 **Part 3: Reference**
-19. Every status word explained
-20. Common error messages and what to do
-21. Rules the system will never let you break
-22. Everyday tasks, step by step
+20. Every status word explained
+21. Common error messages and what to do
+22. Rules the system will never let you break
+23. Everyday tasks, step by step
 
 ---
 
@@ -116,9 +117,13 @@ These are in alphabetical order. If a word on screen confuses you, look here fir
 
 **Dead stock.** Stock that has not moved in a long time. Money sitting on a shelf.
 
-**Discount.** A reduction in price, entered as a percentage. Applying a discount is a restricted action.
+**Discount.** A reduction in price, entered as a percentage. Applying a discount is a restricted action, and a manually entered discount can never exceed 10%. See section 4.
 
 **Dosage form.** The physical shape of the medicine: tablet, capsule, syrup, injection, cream, and so on.
+
+**Expense.** An operating cost of running the business — rent, salaries, electricity, fuel, freight. Recorded in the Accounting module. Distinct from a supplier payment, which settles a bill for goods. See section 15.
+
+**Expense category.** The heading an expense is grouped under for reporting. See section 15.3.
 
 **Expiry date.** The date after which a batch may not be sold or used. The system will physically prevent you from selling expired stock.
 
@@ -166,13 +171,19 @@ These are in alphabetical order. If a word on screen confuses you, look here fir
 
 **Safety stock.** A buffer quantity you aim to always keep, so a delay from a supplier does not leave you at zero.
 
-**Separation of duties.** A control that stops one person doing both halves of a risky transaction. In this system: the person who raises a purchase order cannot be the person who approves it.
+**Separation of duties.** A control that stops one person doing both halves of a risky transaction. In this system: the person who raises a purchase order cannot be the person who approves it; the person who records a supplier invoice is not necessarily the one who may pay it; and recording an expense is a different permission from approving it.
 
 **Statement (customer statement).** A summary of everything a customer has bought and paid, and what they still owe.
 
 **Supplier.** A company you buy from. Must be approved before it can be used on a purchase order.
 
-**Unit of measure.** How you count a product: each, box, carton, bottle.
+**Supplier invoice.** A bill received *from* a supplier — what you owe them. Not to be confused with an invoice, which is what a customer owes you. See section 13.6.
+
+**Supplier payment.** Money paid out to a supplier, allocated across their open invoices. See section 13.7.
+
+**Payment receipt.** The document acknowledging that a customer's invoice has been settled in full. Issued automatically the moment the balance reaches zero. Distinct from a sales receipt, which closes a cash sale.
+
+**Unit of measure.** How you count a product: each, box, carton, bottle. Maintained on its own screen — see section 9.6.
 
 **VAT (in French, *TVA*).** Value added tax. Some medicines are exempt; each product carries its own rate.
 
@@ -341,6 +352,18 @@ Without the discount, the same 100 units would total exactly 118,000 — the she
 
 Applying VAT before the discount would charge the customer VAT on money they never paid. That is a tax compliance error, not a matter of preference, which is why the order is not adjustable.
 
+### There is a hard ceiling on discounts
+
+A manually entered discount cannot exceed **10%**. Try to enter more and the sale is refused: *"A discount of 15% exceeds the maximum of 10%."*
+
+**The ceiling is absolute.** There is no override permission and nobody can authorise more at the counter — not a manager, not an administrator. A limit that a sufficiently senior person can lift is not a limit, it is a speed bump. Changing the figure is a system configuration decision, made once for the whole business, not a per-sale one.
+
+Two things follow from this that are worth knowing:
+
+**Only people with discount authority can discount at all.** That is Store Managers and administrators. A pharmacist or technician who tries is told they do not have permission, rather than being invited to try a smaller number that would fail for the same reason.
+
+**A customer's standing discount is not capped.** The ceiling applies to discounts *typed at the counter*. A discount that comes from the customer record is a contractual rate agreed when the account was opened, governed by who may edit customers, and is not re-argued on every sale. A customer whose negotiated rate is 15% goes on being billed at 15%.
+
 ### Totals update as you type
 
 On the New sale screen, the totals recalculate live, using exactly the same method the server will use. What you see before you click Confirm is what the invoice will say. The server still does the final calculation and remains the authority, but there are no surprises.
@@ -369,7 +392,9 @@ Cannot: apply discounts, sell on credit, change prices, approve anything, receiv
 
 **Pharmacist.** Everything a technician can do, plus clinical and commercial authority.
 
-Adds: create and edit medicines, manage categories and manufacturers, receive stock, adjust stock, dispose of expired stock, transfer stock between warehouses, edit and cancel sales, **sell on credit**, **apply discounts**, process returns, post invoices, email invoices, record payments, issue credit notes, create and edit customers, view customer statements, view suppliers, raise purchase orders and submit them for approval, and view inventory and sales reports.
+Adds: create and edit medicines, manage categories and manufacturers, receive stock, adjust stock, dispose of expired stock, transfer stock between warehouses, edit and cancel sales, **sell on credit**, process returns, post invoices, email invoices, record payments, issue credit notes, create and edit customers, view customer statements, view suppliers, raise purchase orders and submit them for approval, view supplier invoices, record expenses, and view inventory and sales reports.
+
+Cannot: **apply discounts**. Discounting is management authority and sits with the Store Manager and the administrator, not the counter. A pharmacist runs the counter day to day and books the small operating costs that arise there, but approving those costs and seeing the consolidated financial picture stay with management.
 
 **Inventory Officer.** The warehouse role. Focused entirely on physical stock.
 
@@ -379,7 +404,7 @@ Cannot: sell anything, touch prices, or approve anything.
 
 **Store Manager.** Everything an Inventory Officer can do, plus oversight.
 
-Adds: approve stock adjustments, dispose of stock, **see inventory valuation**, manage warehouses, create and edit purchase orders, **approve purchase orders**, cancel orders, record supplier invoices, create and edit suppliers, view sales, **see profit margins**, **re-declare an invoice to the OBR**, view sales and financial reports, and export data.
+Adds: approve stock adjustments, dispose of stock, **see inventory valuation**, manage warehouses, create and edit purchase orders, **approve purchase orders**, cancel orders, record and view supplier invoices, **record and reverse supplier payments**, create and edit suppliers, view sales, **see profit margins**, **apply discounts**, **re-declare an invoice to the OBR**, record, edit and **approve expenses**, manage expense categories, **see the financial overview and accounting reports**, view sales and financial reports, and export data.
 
 > **Worth planning for.** A Store Manager can both raise and approve purchase orders, but never the same one — the system refuses self-approval. If you have only one Store Manager, every order they raise needs a second person with approval authority, or procurement stalls. Make sure at least two people can approve, or that an administrator is available to.
 
@@ -401,7 +426,7 @@ Auditor and System Administrator stand alone.
 
 ### Sensitive permissions
 
-Some permissions are marked sensitive because they involve money, stock quantities, or access. These include: deleting a medicine, changing prices, adjusting stock, disposing of stock, viewing valuation, overriding FEFO, cancelling a sale, selling on credit, applying discounts, overriding a credit limit, processing returns, viewing margins, posting or cancelling invoices, recording payments, issuing credit and debit notes, approving or cancelling purchase orders, recording supplier invoices, deleting a customer or supplier, setting credit limits, financial and compliance reports, exporting data, and all user and role administration.
+Some permissions are marked sensitive because they involve money, stock quantities, or access. These include: deleting a medicine, changing prices, adjusting stock, disposing of stock, viewing valuation, overriding FEFO, cancelling a sale, selling on credit, applying discounts, overriding a credit limit, processing returns, viewing margins, posting or cancelling invoices, recording payments, issuing credit and debit notes, approving or cancelling purchase orders, recording supplier invoices, recording and reversing supplier payments, editing, deleting and approving expenses, viewing the financial overview and accounting reports, deleting a customer or supplier, setting credit limits, financial and compliance reports, exporting data, and all user and role administration.
 
 Actions using a sensitive permission are recorded prominently in the audit log.
 
@@ -439,6 +464,20 @@ On a phone or tablet the sidebar is hidden and opens with the menu button in the
 Click the language button and choose Français or English. The change is instant. You do not sign out, and you do not lose what you were doing.
 
 The change is also saved to your account, which means invoices you generate and emails the system sends you will come in your chosen language too, not just the screen.
+
+### Translating what a colleague wrote
+
+Switching language changes the system's own labels, but it cannot change words a colleague typed. Notes, cancellation reasons, and quality comments are written in whichever language that person works in, and the person reading them later may not share it.
+
+So translation is offered where you are **reading**. Wherever free text was typed by a user, a small **Translate** control sits beside it. Click it and a translation appears; click again to hide it. Nobody has to translate anything before saving, and the work is only done when someone actually needs it.
+
+Two things about this are deliberate:
+
+**The original is never replaced.** It stays on screen with the translation shown alongside. Several of these fields — cancellation reasons, quality notes, credit overrides — are audit evidence, and the words the writer chose *are* the record. A translation is a reading aid, not a replacement.
+
+**The translation is always labelled as machine-produced.** Someone deciding whether to accept a returned batch needs to know they are reading a machine's rendering of a colleague's note rather than the colleague. Nothing you translate is saved back to the record.
+
+The same machine translation fills in the second language when you type a category, manufacturer, or unit name in only one. There it *is* saved — as a starting point you can correct by editing.
 
 ### How lists work
 
@@ -531,6 +570,20 @@ Up to eleven tiles across the top. Two are only visible if you have the right pe
 | **This month's margin** | Profit this month. **Only visible with the "view margin" permission** (Store Manager, Auditor, Administrator). | Green |
 
 If you do not have the valuation or margin permission, those tiles are not merely hidden from your screen; the figures are never sent to your computer at all.
+
+### Choosing the period
+
+Buttons at the top set the period the sales figures cover: **Today**, **This month**, **Last 30 days**, or **This year**. For anything else, set your own **From** and **To** dates. **Reset** puts it back to the default.
+
+When you pick a period other than the default, the sales and margin tiles relabel themselves — "Sales for period", "Margin for period" — so a figure on screen always says which window it belongs to.
+
+> **Not everything follows the date filter, and this is deliberate.** The screen tells you so: *"Stock and receivables are current positions and do not follow the date filter."*
+>
+> Sales and margin are **flows** — money that moved during a period, so a date range makes sense of them. Stock levels, expiring batches, and outstanding invoices are **positions** — what is true right now. There is no such thing as "out of stock last March" that helps you today, and showing an old receivables figure next to a live one is how people chase debts that were already paid.
+
+### The tiles are clickable
+
+Most tiles are links to the list they summarise. Clicking **Out of stock** takes you to the stock list already filtered to what has run out, rather than leaving you to rebuild that filter by hand. The whole tile is the target, not a small link underneath.
 
 ### Revenue trend
 
@@ -749,6 +802,21 @@ The companies that make the products. Same pop-up dialog pattern as categories.
 Fields: code, name, country, website, contact email, contact phone, status.
 
 Note the difference from a supplier: a **manufacturer** makes the medicine; a **supplier** sells it to you. They are often different companies, so they are kept as separate lists.
+
+### 9.6 Units of measure
+
+**Address:** `/catalog/units`
+**Permission needed:** view medicines to see, manage categories to change
+
+How products are counted: each, box, carton, bottle. Same pop-up dialog pattern as categories and manufacturers.
+
+Fields: code, name, base unit, units per pack, status.
+
+**Units per pack** is what lets you buy in one unit and sell in another. If you buy cartons and sell boxes, set the carton's base unit to Box and its units per pack to how many boxes are actually in a carton. A delivery booked in cartons is then expressed correctly in the unit you stock.
+
+**The conversion is always recorded, never guessed.** The system will not assume that a *boîte* means ten of something. Inferring conversions is how stock counts quietly drift away from reality, so if a relationship matters it has to be typed in.
+
+**Names in both languages.** Type the name in whichever language you work in; the other is filled in for you and can be corrected by editing.
 
 ---
 
@@ -1109,7 +1177,30 @@ All sales. Columns: sale number, customer name and code, date, type (Credit sale
 
 **New sale** at the top right if you have permission.
 
-### 11.3 Returns
+Click any row to open the sale.
+
+### 11.3 Sale detail
+
+**Address:** `/sales/<sale number>`
+**Permission needed:** view sales
+
+Everything about one sale.
+
+**The lines**, each showing quantity, unit price, discount, and line total. Under each line the system shows **which batches were actually issued** against it — this is the traceability record, and it is the screen you come to when a recall means you need to know who received a particular batch.
+
+**The totals** — subtotal, discount, VAT, and grand total — and, if you have the margin permission, the profit on the sale.
+
+**The sale card** — customer, sale type (cash or credit), salesperson, date, and status. If the sale produced an invoice, the invoice number is a link straight to it.
+
+**Notes** appear at the bottom, with a Translate control if a colleague wrote them in the other language (see section 6).
+
+**What you can do here depends on the status.**
+
+A **draft** sale carries a banner: *"This draft is not confirmed: no stock has been issued and no document raised. Reopen it to finish and confirm the sale."* This is the important thing to understand about drafts — a draft has reserved nothing, issued nothing, and produced no receipt or invoice. It is a basket, not a sale. You can **edit** it, or **delete** it outright, because deleting something that never affected stock or money leaves nothing behind to explain.
+
+A **confirmed** sale can be **cancelled** if you have the permission, but never edited and never deleted. By then stock has moved and a document exists, so the correction has to be a new record that reverses it rather than a quiet edit. See section 3 on why mistakes are corrected by adding.
+
+### 11.4 Returns
 
 **Address:** `/sales/returns`
 **Permission needed:** view sales
@@ -1215,6 +1306,12 @@ All money received.
 To apply a payment to one specific invoice instead, record it from that invoice's own page.
 
 **Reversing a payment.** The undo arrow reverses a payment, for example when a cheque bounces. A **reason is compulsory**. The payment is not deleted; it is marked Reversed and the reversal is recorded. The customer's balance goes back up.
+
+**Payment receipts are issued for you.** The moment an invoice's balance reaches zero, the system issues a numbered **payment receipt** acknowledging that it has been settled, and it is available from the invoice. Nobody has to remember to produce one — a customer who has just paid expects a document confirming it, and the receipts that depend on someone remembering are the ones that never get issued.
+
+One receipt per invoice. If a payment is later reversed and the invoice reopens, the receipt is **cancelled rather than deleted**, so the numbered series stays unbroken and the document you handed the customer remains on file.
+
+The receipt carries no figures of its own: every amount on it is read from the invoice it acknowledges. That way a credit note issued afterwards cannot leave a receipt quoting a total that is no longer true.
 
 ### 12.4 Declaring invoices to the OBR
 
@@ -1435,6 +1532,58 @@ Columns: receipt number, receipt date, order number, supplier, quantity received
 
 **Direct deliveries do not appear here**, because they have no purchase order to belong to. To see every arrival, whatever its route, use **Stock movements** (section 10.5) and filter on the Goods receipt and Opening balance movement types.
 
+### 13.6 Supplier invoices
+
+**Address:** `/purchasing/supplier-invoices`
+**Permission needed:** view supplier invoices
+
+The bills your suppliers have sent you: what the business owes, and for what. An order is what you asked for; a supplier invoice is what you are being charged.
+
+**Why it is a separate document from the order.** The two do not match one-to-one in real life. A supplier commonly bills several orders on one invoice, bills part of an order after a partial shipment, or bills for something that never had an order at all — freight, customs clearance, a storage charge. So an invoice may be linked to a purchase order, but it does not have to be.
+
+**The amounts are the supplier's, not yours.** The system stores what the supplier actually charged rather than recalculating it from the order. If their invoice disagrees with your order, that disagreement is a fact you need to see and settle with them — not something the system should quietly paper over.
+
+Columns: internal reference, supplier invoice number, supplier, invoice date, due date, total, balance due, status.
+
+**Two numbers per invoice.** The **supplier invoice number** is the number *they* put on their document — you copy it in as printed. The **internal reference** is your own sequential number for the payable. Two different suppliers both numbering their invoices "001" is perfectly ordinary; the system only refuses the same number twice *from the same supplier*.
+
+**Recording an invoice** needs the record supplier invoice permission. You enter the supplier, their invoice number, the dates, and the amounts — subtotal, VAT, and separately freight, customs duty, and other charges. Freight and duty appear here as well as on the order because the order's figures are the estimate and these are what you were actually billed.
+
+If the supplier invoiced in a foreign currency, enter the currency and the exchange rate applied.
+
+**Statuses**
+
+| Status | What it means |
+|---|---|
+| Draft | Being entered; not yet a live payable. |
+| Awaiting payment | Recorded and owed; nothing paid yet. |
+| Partially paid | Some money has gone against it. |
+| Paid | Settled in full. |
+| Overdue | Past its due date with a balance still owing. |
+| Cancelled | Withdrawn. |
+
+The **balance due** is worked out from the payments allocated to the invoice, and recalculated from scratch every time — never nudged up and down. A running tally quietly accumulates errors from every reversal, and a wrong payable balance stays invisible until a supplier disputes their statement.
+
+### 13.7 Supplier payments
+
+**Address:** `/purchasing/supplier-payments`
+**Permission needed:** view supplier payments
+
+Money paid out to suppliers, and which of their invoices it settled.
+
+**Recording a payment** needs the record supplier payment permission — deliberately *not* the same permission as recording an invoice. The person who enters what is owed should not also be the one who pays it.
+
+You record the payment against the **supplier**, not against a single invoice, then decide how it is split. Enter the supplier, the amount, the date money actually left, the method (cash, bank transfer, cheque, mobile money, card, other), and a payment reference — the cheque number, transfer reference, or mobile money code.
+
+**How the money is allocated.** Two modes:
+
+- **Automatic** — the system settles the oldest due invoices first until the money runs out. This is what most payments are, and the screen shows you which invoices it is about to clear before you confirm.
+- **Manual** — you type the amount against each invoice yourself. Use it when a payment deliberately part-pays one bill and clears another, which no automatic rule can work out for you. Switching to manual starts from whatever the automatic plan would have done, so you adjust rather than start from nothing.
+
+Anything you do not allocate stays on the payment as **credit on account** with that supplier, available against their future invoices.
+
+**Reversing a payment** needs the reverse supplier payment permission, and a **reason is compulsory**. A payment is never deleted: it is marked reversed, the invoices it was allocated to reopen, and their balances are recalculated. Money that moved and came back is two events in the cash record, and erasing the first would make the bank statement impossible to reconcile against your books. Reversed payments are excluded from the cash outflow report, because the money did come back.
+
 ---
 
 ## 14. Partners
@@ -1538,7 +1687,103 @@ This stops stock being bought from a source nobody has vetted, which for medicin
 
 ---
 
-## 15. Reports
+## 15. Accounting
+
+Where the money goes. This module answers the day-to-day question the rest of the system could not: the sales screens tell you what came in and the purchasing screens tell you what you bought, but rent, salaries, electricity, and fuel were nowhere.
+
+**What this is not.** It is not a general ledger. There is no chart of accounts, no double-entry, no trial balance. A wholesaler who needs those buys accounting software and files through an accountant. What that arrangement leaves out is the running view of where the money is going, and that is exactly what this module gives you, built from records the pharmacy already keeps.
+
+**Money leaves the business in two shapes**, and the module keeps them apart:
+
+| | **Expense** | **Supplier payment** |
+|---|---|---|
+| What it is | An operating cost: rent, salaries, utilities, shipping | Settling a supplier's invoice for goods |
+| Where you record it | Accounting → Expenses | Purchasing → Supplier payments (section 13.7) |
+
+Supplier payments are *read* by the accounting reports, never re-entered here. There is one row for each payment, in one place, which is what stops the same money being counted twice in a cash outflow report.
+
+### 15.1 Financial overview
+
+**Address:** `/accounting/overview`
+**Permission needed:** view financial overview (store managers and administrators)
+
+The money-in, money-out picture for a period you choose.
+
+**Money in.** Gross revenue, VAT, net revenue, cost of goods, and gross profit — taken from confirmed sales, so these figures match what the sales reports say rather than being worked out a second way. Draft sales (quotations) and cancelled sales are excluded.
+
+**VAT is not revenue.** It is deducted to reach net revenue, because it is money you are holding on behalf of the OBR, not money you earned.
+
+**Money out.** Operating expenses, supplier payments, total cash outflow, and — separately — unpaid expenses.
+
+**The result.** Gross profit minus operating expenses gives the **operating result**, with a margin percentage.
+
+> **Read the operating result as an indicator, not a statutory profit.** It is deliberately labelled that way. It does not carry depreciation, tax, or anything else your accountant will bring to a formal set of accounts.
+
+**Position.** Outstanding payables — what you still owe suppliers in total, and how many suppliers that is spread across.
+
+### 15.2 Expenses
+
+**Address:** `/accounting/expenses`
+**Permission needed:** view expenses
+
+Every operating cost recorded, newest first. Columns: reference, date, category, description, payee, amount, status.
+
+**Recording an expense** needs the record expense permission. Pharmacists have it as well as managers: the small costs that come up at the counter should be booked by the person who incurred them.
+
+**Editing one afterwards is a separate permission**, held by managers and administrators. So a pharmacist can enter a cost but not go back and change the figure — if they have made a mistake, a manager corrects it. Approving, marking paid, and cancelling all sit with management too.
+
+**Two dates, and they are not the same thing.** The **expense date** is when the cost was *incurred*; the **date paid** is when the money actually left. An electricity bill entered on the 1st and paid on the 20th is a commitment for the whole period, and treating it as spent on the 1st would misstate that month's actual outflow. The cash outflow report uses the second date; the expenses-by-category report uses the first.
+
+**Amounts are entered VAT-inclusive**, which is how a receipt from a landlord or a utility actually reads. Record the **VAT included** separately only when you know it and it is recoverable — the system will not assume a VAT figure, because guessing tax on a cost that never carried any overstates what you can reclaim.
+
+**Who was paid.** The **paid to** field is free text, because most overheads go to people who are not pharmaceutical suppliers — a landlord, the water company, a mechanic. Forcing them into the supplier list would clutter the list you pick from when raising purchase orders. When a cost *does* relate to a supplier, or to a specific consignment, you can link the **supplier** and the **purchase order** as well — which is how freight and clearing charges stay traceable to the delivery they were incurred for.
+
+**Notes.** Separate from the description, and deliberately roomy. The description is a one-line summary for the list; the notes are where an unusual cost gets a proper explanation — what it covered, why it was needed, who authorised it.
+
+**Statuses**
+
+| Status | What it means | Editable? |
+|---|---|---|
+| Draft | Being entered. | Yes |
+| Recorded | Booked as a cost incurred. | Yes |
+| Approved | Signed off for payment. | No |
+| Paid | Money has left. | No |
+| Cancelled | Withdrawn, with a reason. | No |
+
+Once an expense is approved it is history, and history is not edited. Approving needs the approve expense permission (managers and administrators) — the same separation as elsewhere: the person who records a cost is not the person who signs it off.
+
+### 15.3 Expense categories
+
+**Address:** `/accounting/categories`
+**Permission needed:** manage expense categories
+
+The headings expenses are grouped under in reports. Fourteen are set up ready to use: rent, salaries, utilities, shipping and freight, office supplies, marketing, maintenance, fuel and travel, telephone and internet, insurance, taxes and licences, professional fees, bank charges, and other.
+
+You can add your own and rename any of them. Each category has a stable internal **code** that the reports group by, so renaming a category for display never breaks the history behind it.
+
+**Names in both languages.** Type the name in whichever language you work in and the system fills in the other for you, machine-translated. It is a starting point — correct it by editing if the wording matters. This is the same behaviour as catalogue categories.
+
+A category that has expenses against it cannot be deleted; deactivate it instead so it stops appearing on new expenses while its history stays intact.
+
+### 15.4 Accounting reports
+
+**Address:** `/accounting/reports`
+**Permission needed:** view accounting reports (store managers and administrators)
+
+Four reports, chosen from the buttons at the top, each over a date range you set.
+
+| Report | What it tells you |
+|---|---|
+| **Expenses by category** | Where the operating money went, by heading, for the period. Grouped on the expense date — when the cost was incurred. |
+| **Supplier payments** | What was paid out to suppliers, and to whom. Filterable by supplier. |
+| **Outstanding balances** | What you still owe each supplier, as at a date you choose. This one takes a single date, not a range. |
+| **Cash outflow** | Everything that actually left the bank in the period, from both sources side by side: supplier payments and paid expenses, then the total. |
+
+**Cash outflow counts money that moved.** Both halves filter on when payment happened, not when the obligation arose. Reversed supplier payments are left out, because that money came back. Costs incurred in the period but not yet settled are reported separately as unpaid expenses, so you can see what is still to come.
+
+---
+
+## 16. Reports
 
 **Address:** `/reports`
 **Permission needed:** at least one report permission. You only see the reports you are allowed.
@@ -1564,11 +1809,9 @@ Each report card has three buttons: **CSV**, **Excel**, and **PDF**. The file do
 | **Gross trading result** | Revenue minus cost of goods sold. | Date range | Financial reports |
 | **Compliance report** | Regulatory and audit information. | Date range | Compliance reports |
 
-**A caution on the gross trading result.** The card says plainly:
+**A caution on the gross trading result.** This is not your profit. It is revenue minus the cost of the goods only — rent, salaries, electricity, and transport are not deducted from it.
 
-> *Gross margin only. Operating expenses are not tracked by this system.*
-
-This is not your profit. It is revenue minus the cost of the goods. Rent, salaries, electricity, and transport are not in this system, so they are not deducted. Do not present this figure as net profit.
+Those costs *are* now recorded, in the Accounting module (section 15). The figure that takes them off is the **operating result** on the Financial overview. Use the gross trading result to judge how well you are buying and selling; use the operating result to judge whether the business is covering its costs.
 
 **Receivables ageing explained.** It groups what customers owe by how overdue it is: not yet due, 1 to 30 days, 31 to 60, 61 to 90, over 90. Older money is harder to collect, so this report is the basis of a collections plan.
 
@@ -1576,11 +1819,11 @@ If you have no report permissions at all, the page says *"You do not have permis
 
 ---
 
-## 16. Administration
+## 17. Administration
 
 Restricted to System Administrators (and the Audit log, also to Auditors).
 
-### 16.1 Users
+### 17.1 Users
 
 **Address:** `/admin/users`
 **Permission needed:** view users
@@ -1598,7 +1841,7 @@ Suspension is shown ahead of inactivity, because a suspended account is a delibe
 
 **Filter:** All, Active, Inactive.
 
-### 16.2 New user / User detail
+### 17.2 New user / User detail
 
 Creating a user asks for first name, last name, email, employee number, job title, language, and roles.
 
@@ -1624,7 +1867,7 @@ Copy it before closing the dialog. It cannot be retrieved afterwards.
 
 Changing a password automatically ends every session that user has, everywhere.
 
-### 16.3 Roles
+### 17.3 Roles
 
 **Address:** `/admin/roles`
 **Permission needed:** view users to see, manage roles to change
@@ -1647,7 +1890,7 @@ They cannot be edited or deleted, because they are the tested, coherent definiti
 
 Think in terms of the job. Start from what the role genuinely needs, not from "administrator, minus a few things". That is how people quietly end up with authority nobody intended.
 
-### 16.4 Audit log
+### 17.4 Audit log
 
 **Address:** `/admin/audit`
 **Permission needed:** view audit log (Auditor and Administrator)
@@ -1685,7 +1928,7 @@ The check also runs automatically every night, and sends a critical alert if it 
 
 ---
 
-## 17. Notifications
+## 18. Notifications
 
 **Address:** `/notifications`
 **Who sees it:** everyone. The bell in the top bar shows unread count and refreshes every minute.
@@ -1733,7 +1976,7 @@ The two critical ones, stock discrepancy and audit integrity failure, are differ
 
 ---
 
-## 18. My profile
+## 19. My profile
 
 **Address:** `/profile`
 **Who sees it:** everyone, for their own account. Reached by clicking your name at the bottom of the sidebar.
@@ -1772,7 +2015,7 @@ Read-only. Shows your employee number, your last sign-in, and the roles you hold
 
 # PART 3: REFERENCE
 
-## 19. Every status word explained
+## 20. Every status word explained
 
 **Invoice statuses**
 
@@ -1823,6 +2066,31 @@ Separate from the statuses above: these say whether the tax authority has the in
 | Closed | Finished. |
 | Cancelled | Abandoned. |
 
+**Supplier invoice statuses**
+
+What *you* owe a supplier, as opposed to what a customer owes you. See section 13.6.
+
+| Status | Meaning |
+|---|---|
+| Draft | Being entered; not yet a live payable. |
+| Awaiting payment | Recorded and owed; nothing paid yet. |
+| Partially paid | Some money has gone against it. |
+| Paid | Settled in full. |
+| Overdue | Past its due date with a balance still owing. |
+| Cancelled | Withdrawn. |
+
+**Expense statuses**
+
+See section 15.2.
+
+| Status | Meaning | Editable? |
+|---|---|---|
+| Draft | Being entered. | Yes |
+| Recorded | Booked as a cost incurred. | Yes |
+| Approved | Signed off for payment. | No |
+| Paid | Money has left the business. | No |
+| Cancelled | Withdrawn, with a reason. | No |
+
 **Batch statuses**
 
 | Status | Sellable | Meaning |
@@ -1848,13 +2116,15 @@ Separate from the statuses above: these say whether the tax authority has the in
 
 ---
 
-## 20. Common error messages and what to do
+## 21. Common error messages and what to do
 
 | Message | What it means | What to do |
 |---|---|---|
 | *There is not enough stock to complete this operation.* | You asked for more than the available quantity. Remember that reserved stock is not available. | Check Stock levels for the available figure. Reduce the quantity, or order more. |
 | *This batch has expired and cannot be used.* | The batch is past its expiry date. | Expired stock cannot be sold under any circumstances. It needs disposing of. |
 | *This operation would exceed the customer's credit limit.* | The sale would push the customer over their limit. | Reduce the sale, collect payment on an old invoice first, or ask a supervisor with override authority. |
+| *A discount of 15% exceeds the maximum of 10%.* | The discount you typed is above the ceiling that applies to everyone. | Reduce it to 10% or less. Nobody can authorise more — see section 4. If the customer has a negotiated rate above that, it belongs on their customer record as a standing discount. |
+| *You do not have permission to apply a discount.* | Discounting is management authority. | Ask a Store Manager or an administrator. Do not try a smaller figure; it will be refused for the same reason. |
 | *This action is not permitted in the document's current state.* | You are trying to do something out of sequence, for example receiving goods on an unapproved order. | Check the document's status and follow the correct sequence. |
 | *This document is posted and can no longer be modified.* | You tried to change a finalised invoice. | Issue a credit note instead. |
 | *A reason is required for this operation.* | You left a compulsory reason blank. | Enter a genuine reason. It will be read by someone one day. |
@@ -1887,7 +2157,7 @@ These produce no error message, which is precisely why they cause confusion.
 
 ---
 
-## 21. Rules the system will never let you break
+## 22. Rules the system will never let you break
 
 These are not settings. No permission, no role, and no administrator can switch them off.
 
@@ -1908,12 +2178,15 @@ These are not settings. No permission, no role, and no administrator can switch 
 15. **A batch number is never generated for you.** It is copied from the manufacturer's carton, because a batch number that does not match the printed lot code is useless in a recall.
 16. **You cannot change your own roles.**
 17. **Changing a password signs you out everywhere.**
+18. **A manually entered discount can never exceed 10%.** There is no override permission and no senior user who can authorise more, because a limit that someone sufficiently senior can lift is not a limit. A customer's standing contractual discount is separate and is not capped. See section 4.
+19. **An expense that has been approved or paid cannot be edited.** By then it is history. Cancel it with a reason instead.
+20. **A supplier payment is never deleted.** Reversing one reopens the invoices it settled and recalculates their balances, leaving the reversal on the record.
 
 If one of these blocks you, the rule is doing its job. The right response is to follow the proper route, not to look for a way around it.
 
 ---
 
-## 22. Everyday tasks, step by step
+## 23. Everyday tasks, step by step
 
 ### Make a cash sale
 
@@ -2034,6 +2307,51 @@ Requires record payment.
 
 **For a general payment across several invoices:** Invoicing → Payments → Record payment. Choose the customer and enter the amount. The money is applied to the oldest invoices first.
 
+The payment receipt for any invoice that reaches zero is issued automatically — you do not raise it.
+
+### Record a bill from a supplier
+
+Requires record supplier invoice.
+
+1. Purchasing → Supplier invoices → **New**.
+2. Choose the supplier and type **their** invoice number exactly as printed on the document.
+3. If it bills a purchase order, link that order. Leave it blank for freight, clearing, or anything else that had no order.
+4. Enter the invoice date and the due date, then the amounts: subtotal, VAT, and freight, duty and other charges as billed.
+5. Save. The invoice becomes a payable and appears in the supplier's outstanding balance.
+
+### Pay a supplier
+
+Requires record supplier payment.
+
+1. Purchasing → Supplier payments → **New**.
+2. Choose the supplier. Their open invoices are listed.
+3. Enter the amount, the date the money actually left, the method, and the reference (cheque number, transfer reference, mobile money code).
+4. Leave allocation on **Automatic** to settle the oldest invoices first — the screen shows you which ones before you confirm. Switch to **Manual** only if the payment deliberately splits across specific bills.
+5. Confirm. Anything unallocated stays as credit on account with that supplier.
+
+### Record an operating cost
+
+Requires record expense. Pharmacists and above.
+
+1. Accounting → Expenses → **New**.
+2. Choose the category (rent, salaries, fuel, and so on) and describe what the cost was for.
+3. Set the **expense date** — when the cost was incurred, not when you paid it.
+4. Enter the amount as it reads on the receipt, VAT included. Fill in the VAT figure separately only if you know it and can reclaim it.
+5. Enter who was paid. Link a supplier or purchase order if the cost relates to one, such as freight on a consignment.
+6. Save. Use the notes field if the cost needs explaining.
+
+When it is actually paid, set the **date paid** and mark it Paid — that is the date the cash outflow report uses.
+
+### See where the money went last month
+
+Requires view accounting reports.
+
+- **Accounting → Overview** for the whole picture: revenue, cost of goods, expenses, and the operating result.
+- **Accounting → Reports → Expenses by category** for what you spent it on.
+- **Accounting → Reports → Cash outflow** for what actually left the bank, supplier payments and expenses side by side.
+
+Remember the overview's operating result is an indicator, not a statutory profit figure.
+
 ### Do a stock count adjustment
 
 Requires adjust stock.
@@ -2106,7 +2424,7 @@ Requires create medicine.
 
 **If a button is missing or greyed out.** It is almost always a permission. Your profile page lists your roles. Tell your administrator which action you need, not just "I need more access".
 
-**If the system refuses something.** Read the message. The rules in section 21 exist for regulatory and financial reasons, and the right answer is the proper route, not a workaround.
+**If the system refuses something.** Read the message. The rules in section 22 exist for regulatory and financial reasons, and the right answer is the proper route, not a workaround.
 
 **If a figure looks wrong.** Check Stock levels for available versus remaining, check Payments for unallocated money, and check the Movements ledger, which shows every change with who made it.
 
