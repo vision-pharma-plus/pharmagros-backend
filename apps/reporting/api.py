@@ -98,6 +98,9 @@ class _ReportView(APIView):
 class DashboardView(_ReportView):
     required_permissions = "reporting.view_dashboard"
     report_name = "dashboard"
+    # Not the "reports" budget: this is the landing page after login, revisited
+    # all day, and it is never exported. See DEFAULT_THROTTLE_RATES.
+    throttle_scope = "dashboard"
 
     @extend_schema(
         tags=["reporting"], summary="Dashboard KPIs", responses={200: DashboardSerializer},
@@ -139,6 +142,8 @@ class DashboardView(_ReportView):
 class DashboardWidgetsView(_ReportView):
     required_permissions = "reporting.view_dashboard"
     report_name = "dashboard_widgets"
+    # Shares the dashboard's budget: one page load spends both endpoints.
+    throttle_scope = "dashboard"
 
     @extend_schema(
         tags=["reporting"], summary="Dashboard widget data", responses={200: DashboardWidgetsSerializer},

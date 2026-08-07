@@ -56,13 +56,13 @@ AXES_ENABLED = False
 # Throttling would make repeated auth calls in the suite fail spuriously.
 REST_FRAMEWORK = {  # noqa: F405
     **REST_FRAMEWORK,  # noqa: F405
-    "DEFAULT_THROTTLE_RATES": {
-        "auth": None,
-        "password_reset": None,
-        "reports": None,
-        "translate": None,
-        "default": None,
-    },
+    # Derived from the base rates rather than listed by hand: a scope that
+    # exists in base but is missing here raises KeyError at request time
+    # ("no rate for scope X"), so a hardcoded copy turns every new scope into
+    # a 500 in the suite until someone remembers to mirror it.
+    "DEFAULT_THROTTLE_RATES": dict.fromkeys(
+        REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]  # noqa: F405
+    ),
 }
 
 LOGGING["root"]["level"] = "ERROR"  # noqa: F405
