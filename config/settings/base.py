@@ -210,6 +210,13 @@ REST_FRAMEWORK = {
         "auth": "10/min",       # login / token endpoints
         "password_reset": "5/hour",
         "reports": "60/hour",   # report generation is expensive
+        # The dashboard is a screen, not an export: it is the landing page
+        # after login and staff return to it all day, and each load costs two
+        # calls (KPIs + widgets). Sharing the "reports" budget locked users
+        # out of their own home page after ~30 visits, for the rest of the
+        # hour, with a raw "Expected available in N seconds" message. Kept as
+        # a real limit rather than removed — the queries are still aggregates.
+        "dashboard": "600/hour",
         # Each cache miss is a paid upstream call. Generous enough to read a
         # page of notes, tight enough that a loop cannot run up a bill.
         "translate": "120/hour",
